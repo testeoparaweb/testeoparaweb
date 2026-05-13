@@ -1,0 +1,101 @@
+import { NextResponse } from "next/server";
+
+import { createAdminClient } from "@/lib/supabase/admin";
+
+export async function POST(request: Request) {
+  try {
+    const body = (await request.json()) as
+      | {
+          accion: "cargar";
+          gusto_id: string;
+          gusto: string;
+          kilos: number;
+          porciones_cargadas: number;
+          stock_actual: number;
+          unidad?: string;
+        }
+      | {
+          accion: "cerrar";
+          tanda_id: string;
+          gusto_id: string;
+          stock_actual: number;
+        };
+    const supabase = createAdminClient();
+
+    if (body.accion === "cargar") {
+      const [tanda, gusto] = await Promise.all([
+        supabase.from("tandas_gustos").insert({
+          gusto_id: body.gusto_id,
+          gusto: body.gusto,
+          kilos: body.kilos,
+          porciones_cargadas: body.porciones_cargadas,
+          estado: "activa",
+        }),
+        supabase
+          .from("gustos")
+          .update({ stock: body.stock_actual + body.porciones_cargadas })
+          .eq("id", body.gusto_id),
+      ]);
+
+      const error = tanda.error || gusto.error;
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
+    const [tanda, gusto] = await Promise.all([
+      supabase
+        .from("tandas_gustos")
+        .update({
+          estado: "cerrada",
+          cerrado: new Date().toISOString(),
+          stock_sistema_al_cerrar: body.stock_actual,
+          rendimiento_sugerido: null,
+        })
+        .eq("id", body.tanda_id),
+      supabase.from("gustos").update({ stock: 0 }).eq("id", body.gusto_id),
+    ]);
+
+    const error = tanda.error || gusto.error;
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    const { data: tandaCerrada, error: tandaError } = await supabase
+      .from("tandas_gustos")
+      .select("porciones_cargadas,stock_sistema_al_cerrar")
+      .eq("id", body.tanda_id)
+      .single();
+
+    if (tandaError) {
+      return NextResponse.json({ error: tandaError.message }, { status: 500 });
+    }
+
+    const sugerencia = Math.max(
+      0,
+      Number(tandaCerrada.porciones_cargadas ?? 0) -
+        Number(tandaCerrada.stock_sistema_al_cerrar ?? 0),
+    );
+
+    const { error: updateSuggestionError } = await supabase
+      .from("tandas_gustos")
+      .update({ rendimiento_sugerido: sugerencia })
+      .eq("id", body.tanda_id);
+
+    if (updateSuggestionError) {
+      return NextResponse.json(
+        { error: updateSuggestionError.message },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ ok: true, sugerencia });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Error desconocido" },
+      { status: 500 },
+    );
+  }
+}
