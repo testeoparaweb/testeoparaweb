@@ -58,3 +58,34 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const body = (await request.json()) as { id?: string };
+    const id = body.id?.trim();
+
+    if (!id) {
+      return NextResponse.json(
+        { error: "Falta el id del gusto" },
+        { status: 400 },
+      );
+    }
+
+    const supabase = createAdminClient();
+    const { error } = await supabase
+      .from("gustos")
+      .update({ disponible: false })
+      .eq("id", id);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Error desconocido" },
+      { status: 500 },
+    );
+  }
+}

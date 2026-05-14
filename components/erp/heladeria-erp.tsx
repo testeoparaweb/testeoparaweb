@@ -11,6 +11,7 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle2,
+  CircleHelp,
   Coffee,
   CreditCard,
   DollarSign,
@@ -46,6 +47,18 @@ type ViewId =
   | "stock";
 type AttendanceEvent = "entrada" | "salida";
 type ShiftName = "manana" | "tarde";
+type HelpSection = {
+  title: string;
+  description: string;
+  details: string[];
+};
+
+type DeleteConfirmation = {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  onConfirm: () => Promise<boolean>;
+};
 
 type Product = {
   id: string;
@@ -107,6 +120,7 @@ type SaleItem = {
   saleId: string;
   product: string;
   quantity: number;
+  cost: number;
   flavors: string[];
   createdAt: string;
 };
@@ -212,6 +226,7 @@ type SaleItemRow = {
   venta_id: string;
   producto: string;
   cantidad: NumericValue;
+  costo: NumericValue;
   gustos: string[] | null;
   creado: string | null;
 };
@@ -283,13 +298,274 @@ const DEFAULT_BRANCH_ID = "00000000-0000-0000-0000-000000000001";
 
 const navItems: NavItem[] = [
   { id: "caja", label: "Caja", icon: ShoppingCart },
-  { id: "analisis", label: "AnÃ¡lisis", icon: BarChart3 },
+  { id: "analisis", label: "AnÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡lisis", icon: BarChart3 },
   { id: "historial", label: "Historial", icon: CalendarClock },
   { id: "finanzas", label: "Ganancia", icon: WalletCards },
   { id: "empleados", label: "Empleados", icon: Users },
   { id: "stock", label: "Stock", icon: Package },
 ];
 
+const helpContentByView: Record<
+  ViewId,
+  { title: string; summary: string; sections: HelpSection[] }
+> = {
+  caja: {
+    title: "Ayuda de caja",
+    summary: "Para tomar pedidos rapido y cobrar sin perder ventas ni stock.",
+    sections: [
+      {
+        title: "Categorias",
+        description:
+          "Primero elegi una categoria y despues un producto. Asi el empleado encuentra todo mas rapido.",
+        details: [
+          "Cuando entras a Caja, primero ves las categorias grandes. Eso sirve para no mezclar todo el catalogo junto.",
+          "Si tocas una categoria, entrás a esa vista y ahi aparecen solo los productos de ese rubro. Con Volver regresas al inicio.",
+          "Si no sabes donde esta algo, usa el buscador de esa categoria para filtrar por nombre.",
+        ],
+      },
+      {
+        title: "Helados y gustos",
+        description:
+          "Si el producto necesita gustos, se abre una ventana para elegir sabores. Podes buscar sabores, repetirlos y ver el stock estimado.",
+        details: [
+          "Los productos de helado abren una ventana especial para elegir gustos segun el maximo permitido por ese producto.",
+          "El buscador de sabores filtra por nombre o por categoria del gusto, por ejemplo crema o al agua.",
+          "Si el cliente repite un sabor, podes tocar el mismo gusto mas de una vez y el sistema lo cuenta en el pedido.",
+        ],
+      },
+      {
+        title: "Pedido",
+        description:
+          "A la derecha se arma el pedido. Desde ahi podes sumar, restar, borrar lineas, elegir metodo de pago y cobrar.",
+        details: [
+          "Cada vez que agregas un producto, aparece en el panel del pedido con cantidad, total y gustos si corresponde.",
+          "Los botones de sumar, restar o borrar sirven para corregir el pedido antes de cobrarlo.",
+          "Cuando tocas Cobrar pedido, se guarda la venta, descuenta stock y despues aparece en analisis e historial.",
+        ],
+      },
+      {
+        title: "Bajo stock",
+        description:
+          "El boton de bajo stock muestra rapido los productos o gustos que estan en o por debajo del minimo.",
+        details: [
+          "Si tocas Bajo stock, entras en una vista especial para revisar faltantes sin recorrer toda la caja.",
+          "Ahi podes cambiar entre Productos y Gustos para ver que hay que reponer.",
+          "Esta vista es solo informativa para trabajar mas rapido; la reposicion real se hace desde Stock.",
+        ],
+      },
+    ],
+  },
+  analisis: {
+    title: "Ayuda de analisis",
+    summary: "Para ver ventas, costo vendido, ganancias y detalle del mes.",
+    sections: [
+      {
+        title: "Resumen",
+        description:
+          "Muestra ventas brutas, costo de productos vendidos, gastos fijos, productos vendidos y ganancia real.",
+        details: [
+          "Ventas brutas muestra todo lo cobrado en el periodo sin restar nada.",
+          "Costo de productos vendidos usa el costo cargado en cada producto y lo descuenta solo si ese producto se vendio.",
+          "Ganancia real es el numero final despues de restar costo vendido y gastos fijos.",
+        ],
+      },
+      {
+        title: "Rankings",
+        description:
+          "Ahi ves los gustos y productos mas pedidos segun las ventas guardadas.",
+        details: [
+          "El ranking de gustos sale de los gustos elegidos en las ventas, no de una carga manual.",
+          "El ranking de productos suma cantidades vendidas del mes para mostrar que rota mas.",
+          "Sirve para detectar que conviene producir mas o que producto conviene destacar.",
+        ],
+      },
+      {
+        title: "Ventas",
+        description:
+          "Cada fila es una venta. Si la tocas, se despliega el detalle completo con productos, gustos, cliente, metodo y total.",
+        details: [
+          "La fila muestra un resumen corto del pedido para que no tengas que leer codigos internos.",
+          "Cuando la expandis, ves fecha y hora exacta, subtotal, descuento, total y cada producto del pedido.",
+          "Sirve para revisar errores, confirmar que se cobro algo o entender que se vendio en una venta puntual.",
+        ],
+      },
+      {
+        title: "Gastos",
+        description:
+          "Resume lo que se resta para calcular la ganancia real del negocio.",
+        details: [
+          "Ahi podes comparar rapido el costo vendido contra los gastos fijos del local.",
+          "No mezcla compras genericas con ventas; la idea es que la ganancia refleje lo que realmente se vendio.",
+          "Si algo no te cierra en la ganancia, esta vista es el primer lugar para revisarlo.",
+        ],
+      },
+    ],
+  },
+  historial: {
+    title: "Ayuda de historial",
+    summary: "Para comparar como viene el negocio por dia, semana, mes o año.",
+    sections: [
+      {
+        title: "Periodos",
+        description:
+          "Usa los botones Diario, Semanal, Mensual y Anual para cambiar la vista del historial.",
+        details: [
+          "Cada boton cambia solo la tabla de ese periodo para que no tengas todo mezclado en la misma pantalla.",
+          "Diario sirve para ver la ultima semana, Semanal resume bloques de 7 dias, Mensual compara meses y Anual compara años.",
+          "Es ideal para detectar si hubo semanas flojas, meses fuertes o cambios en la estacionalidad.",
+        ],
+      },
+      {
+        title: "Neto",
+        description:
+          "El valor neto ya descuenta costo de productos vendidos y gastos fijos del periodo.",
+        details: [
+          "El neto no es solo ventas menos gastos fijos: tambien resta el costo de lo que realmente se vendio en ese periodo.",
+          "Por eso puede pasar que un periodo venda mucho pero deje menos margen que otro.",
+          "Te sirve para leer el negocio con mas precision, no solo por caja bruta.",
+        ],
+      },
+      {
+        title: "Productos",
+        description:
+          "La ultima columna muestra cuantas unidades se vendieron en cada periodo.",
+        details: [
+          "Ese numero te ayuda a entender si el ingreso vino por vender mucho o por vender tickets mas caros.",
+          "Comparar productos vendidos con el total neto sirve para medir volumen contra margen.",
+          "Tambien ayuda a detectar dias con mucho movimiento aunque el importe total no haya sido tan alto.",
+        ],
+      },
+    ],
+  },
+  finanzas: {
+    title: "Ayuda de ganancia",
+    summary: "Para ver cuanto entra, cuanto cuesta vender y cuanto queda realmente.",
+    sections: [
+      {
+        title: "Total vendido",
+        description:
+          "Es todo lo que entro por ventas antes de restar costos y gastos.",
+        details: [
+          "Este numero es bruto: muestra cuanto entro por caja, mostrador o los metodos de pago guardados.",
+          "No significa ganancia; solo es el ingreso antes de cualquier descuento.",
+          "Sirve como punto de partida para entender el resto del cuadro.",
+        ],
+      },
+      {
+        title: "Costo vendido",
+        description:
+          "Se calcula automatico con el costo cargado en cada producto y solo descuenta lo que realmente se vendio.",
+        details: [
+          "Si un producto no se vendio, su costo no impacta en esta parte del calculo.",
+          "Esto evita mezclar compras generales con margen real de lo que salio por venta.",
+          "Por eso es importante mantener bien cargado el costo de cada producto en Stock.",
+        ],
+      },
+      {
+        title: "Gastos fijos",
+        description:
+          "Aca editas sueldos, luz, agua, gas, alquiler y otros gastos generales del local.",
+        details: [
+          "Estos gastos se descuentan aparte del costo del producto vendido.",
+          "Sirven para representar la carga fija del negocio: personal, servicios y alquiler.",
+          "Cuando cambias uno y guardas, la ganancia se recalcula con ese valor hacia adelante.",
+        ],
+      },
+      {
+        title: "Ganancia real",
+        description:
+          "Es el resultado final: ventas menos costo vendido y menos gastos fijos.",
+        details: [
+          "Es el numero mas confiable para ver cuanto deja realmente el negocio en el periodo.",
+          "No depende de cargar compras manuales de materiales para cada venta, sino del costo del producto que si se vendio.",
+          "Si queres mejorar este numero, lo importante es mirar margen por producto y gastos fijos.",
+        ],
+      },
+    ],
+  },
+  empleados: {
+    title: "Ayuda de empleados",
+    summary: "Para administrar el equipo y registrar entradas y salidas.",
+    sections: [
+      {
+        title: "Alta y edicion",
+        description:
+          "Desde Agregar empleado cargas uno nuevo. En cada tarjeta tambien podes editar nombre, rol, turno, sector y estado.",
+        details: [
+          "Usa Agregar empleado para cargar nuevos miembros del equipo con sus datos basicos.",
+          "En cada tarjeta el boton Editar te deja cambiar nombre, rol, turno, sector y estado sin borrar el empleado.",
+          "Es util para mantener actualizado quien esta en caja, produccion, salon o cafeteria.",
+        ],
+      },
+      {
+        title: "Entrada y salida",
+        description:
+          "Los botones registran cuando cada empleado entra o sale y lo guardan en los registros.",
+        details: [
+          "Entrada guarda el momento en que empieza a trabajar y Salida marca cuando termina o se retira.",
+          "Cada registro queda con fecha completa y turno para poder revisarlo despues.",
+          "Esto ayuda a ordenar horarios y a controlar quien estuvo trabajando en cada franja.",
+        ],
+      },
+      {
+        title: "Registros",
+        description:
+          "A la derecha ves el historial reciente con fecha completa y tipo de movimiento.",
+        details: [
+          "La columna de registros muestra entradas y salidas recientes con una marca visual distinta para cada tipo.",
+          "Sirve para confirmar rapido si alguien ya entro, salio o si se olvidaron de marcar.",
+          "Tambien te deja revisar los movimientos del dia sin entrar a otra pantalla.",
+        ],
+      },
+    ],
+  },
+  stock: {
+    title: "Ayuda de stock",
+    summary: "Para controlar productos, gustos y alertas de reposicion.",
+    sections: [
+      {
+        title: "Productos",
+        description:
+          "Aca editas nombre, precio, costo, stock, minimo, unidad, imagen y configuracion de gustos.",
+        details: [
+          "Cada producto tiene su precio de venta, su costo y su stock disponible. Eso alimenta tanto caja como ganancia real.",
+          "El minimo sirve para disparar alertas de reposicion y mostrar bajo stock en varias partes del sistema.",
+          "Si es un helado, tambien podes definir cuantos gustos permite y cuanto descuenta del stock de sabores.",
+        ],
+      },
+      {
+        title: "Gustos",
+        description:
+          "Aca controlas stock de sabores, categoria, color, baldes y reposicion por gusto.",
+        details: [
+          "Los gustos tienen stock propio, minimo, categoria y color para que sea mas facil usarlos en caja.",
+          "Tambien podes cargar tandas o baldes para calibrar cuantas porciones reales te rinde cada sabor.",
+          "Esto ayuda a que el stock de sabores baje con las ventas de helado y no quede solo a ojo.",
+        ],
+      },
+      {
+        title: "Alertas",
+        description:
+          "Los filtros de bajo stock sirven para encontrar rapido que hay que reponer.",
+        details: [
+          "Podes filtrar solo productos bajos o solo gustos bajos segun que necesites revisar.",
+          "Las alertas aparecen para acelerar la reposicion y evitar quedarte sin algo en caja.",
+          "Lo ideal es revisar esta parte antes de los horarios fuertes del local.",
+        ],
+      },
+      {
+        title: "Costo del producto",
+        description:
+          "El costo que cargues en cada producto se usa despues para calcular la ganancia real cuando ese producto se vende.",
+        details: [
+          "Si el costo esta mal cargado, la ganancia real tambien va a quedar mal calculada.",
+          "No hace falta cargar compras manuales para que impacten en cada venta: el sistema usa este costo por producto vendido.",
+          "Por eso conviene revisar el costo cada vez que cambian fuerte los insumos o la receta.",
+        ],
+      },
+    ],
+  },
+};
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat("es-AR", {
     style: "currency",
@@ -326,6 +602,33 @@ const createIdFromName = (name: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
+
+const createAutomaticId = (
+  name: string,
+  existingIds: string[],
+  currentId?: string,
+) => {
+  if (currentId?.trim()) {
+    return currentId.trim();
+  }
+
+  const baseId = createIdFromName(name) || `item-${Date.now()}`;
+  const usedIds = new Set(existingIds.filter((id) => id !== currentId));
+
+  if (!usedIds.has(baseId)) {
+    return baseId;
+  }
+
+  let suffix = 2;
+  let candidate = `${baseId}-${suffix}`;
+
+  while (usedIds.has(candidate)) {
+    suffix += 1;
+    candidate = `${baseId}-${suffix}`;
+  }
+
+  return candidate;
+};
 
 const getFlavorCategoryName = (category?: string | null) =>
   category?.trim() || "Sin categoria";
@@ -403,6 +706,7 @@ const mapSaleItem = (item: SaleItemRow): SaleItem => ({
   saleId: item.venta_id,
   product: item.producto,
   quantity: toNumber(item.cantidad),
+  cost: toNumber(item.costo),
   flavors: item.gustos ?? [],
   createdAt: item.creado ?? new Date().toISOString(),
 });
@@ -473,6 +777,10 @@ const mapAttendance = (attendance: AttendanceRow): Attendance => ({
 
 export function HeladeriaErp() {
   const [activeView, setActiveView] = useState<ViewId>("caja");
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] =
+    useState<DeleteConfirmation | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [products, setProducts] = useState<Product[]>([]);
   const [iceCreamFlavors, setIceCreamFlavors] = useState<IceCreamFlavor[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
@@ -495,6 +803,7 @@ export function HeladeriaErp() {
   const [isCharging, setIsCharging] = useState(false);
   const [, setIsSupabaseReady] = useState(false);
   const [, setIsLoadingData] = useState(true);
+  const activeHelp = helpContentByView[activeView];
 
   const loadData = async (successNotice = "Datos conectados con Supabase") => {
     setIsLoadingData(true);
@@ -557,8 +866,33 @@ export function HeladeriaErp() {
   const saleDiscount = saleSubtotal >= 30000 ? saleSubtotal * 0.05 : 0;
   const saleTotal = saleSubtotal - saleDiscount;
   const grossRevenue = sales.reduce((total, sale) => total + sale.total, 0);
-  const totalExpenses = expenses.reduce((total, expense) => total + expense.amount, 0);
-  const netProfit = grossRevenue - totalExpenses;
+  const soldProductCost = saleItems.reduce(
+    (total, item) => total + item.cost * item.quantity,
+    0,
+  );
+  const financialTimestamps = [
+    ...sales.map((sale) => new Date(sale.createdAt).getTime()),
+    ...expenseHistory.map((snapshot) => new Date(snapshot.startsAt).getTime()),
+  ].filter((value) => Number.isFinite(value));
+  const financialRangeEnd = financialTimestamps.length
+    ? endOfDay(new Date(Math.max(...financialTimestamps)))
+    : endOfDay(new Date("2026-01-01T00:00:00.000Z"));
+  const financialRangeStart = sales.length
+    ? startOfDay(
+        new Date(
+          Math.min(...sales.map((sale) => new Date(sale.createdAt).getTime())),
+        ),
+      )
+    : startOfDay(financialRangeEnd);
+  const expenseBreakdown = calculateExpenseBreakdownBetween(
+    financialRangeStart,
+    financialRangeEnd,
+    expenses,
+    expenseHistory,
+  );
+  const fixedExpenses = expenseBreakdown.fixed;
+  const totalExpenses = fixedExpenses;
+  const netProfit = grossRevenue - soldProductCost - fixedExpenses;
   const lowStock = products.filter((product) => product.stock <= product.minStock);
   const lowFlavorStock = iceCreamFlavors.filter((flavor) => flavor.stock <= flavor.minStock);
   const unitsInStock = products.reduce((total, product) => total + product.stock, 0);
@@ -843,40 +1177,14 @@ export function HeladeriaErp() {
     }
   };
 
-  const restockProduct = async (id: string, amount: number) => {
-    const product = products.find((item) => item.id === id);
-    if (!product) return;
-
-    const nextStock = product.stock + amount;
-
-    const response = await fetch("/api/erp/stock", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        producto_id: id,
-        stock: nextStock,
-        movimiento: {
-          sucursal_id: DEFAULT_BRANCH_ID,
-          producto_id: id,
-          tipo: "reposicion",
-          cantidad: amount,
-          nota: "Reposicion desde modulo stock",
-        },
-      }),
-    });
-
-    if (!response.ok) {
-      setNotice("No se pudo actualizar el stock en la base");
-      return;
-    }
-
-    await loadData("Stock actualizado en la base");
-  };
-
   const saveProduct = async (product: ProductForm, previousStock?: number) => {
-    const id = product.id.trim() || createIdFromName(product.name);
+    const id = createAutomaticId(
+      product.name,
+      products.map((item) => item.id),
+      product.id,
+    );
     if (!id || !product.name.trim() || !product.category.trim()) {
-      setNotice("CompletÃ¡ nombre, ID y rubro del producto");
+      setNotice("CompletÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ nombre y rubro del producto");
       return false;
     }
 
@@ -909,6 +1217,34 @@ export function HeladeriaErp() {
 
     await loadData("Producto guardado en stock");
     return true;
+  };
+
+  const performDeleteProduct = async (product: Product) => {
+    const response = await fetch("/api/erp/productos", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: product.id }),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setNotice(data?.error ?? "No se pudo eliminar el producto");
+      return false;
+    }
+
+    await loadData("Producto eliminado");
+    return true;
+  };
+
+  const deleteProduct = (product: Product) => {
+    setDeleteConfirmation({
+      title: "Eliminar producto",
+      description: `Vas a ocultar ${product.name} del catalogo activo. Las ventas viejas siguen guardadas.`,
+      confirmLabel: "Eliminar producto",
+      onConfirm: () => performDeleteProduct(product),
+    });
   };
 
   const updateExpense = (key: string, value: number) => {
@@ -945,7 +1281,7 @@ export function HeladeriaErp() {
 
   const saveEmployee = async (person: StaffForm) => {
     if (!person.name.trim() || !person.role.trim()) {
-      setNotice("CompletÃ¡ nombre y rol del empleado");
+      setNotice("CompletÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ nombre y rol del empleado");
       return false;
     }
 
@@ -977,11 +1313,15 @@ export function HeladeriaErp() {
 
   const saveFlavor = async (flavor: FlavorForm) => {
     if (!flavor.name.trim()) {
-      setNotice("CompletÃ¡ el nombre del gusto");
+      setNotice("CompletÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ el nombre del gusto");
       return false;
     }
 
-    const id = flavor.id.trim() || createIdFromName(flavor.name);
+    const id = createAutomaticId(
+      flavor.name,
+      iceCreamFlavors.map((item) => item.id),
+      flavor.id,
+    );
 
     const response = await fetch("/api/erp/gustos", {
       method: "POST",
@@ -1008,6 +1348,46 @@ export function HeladeriaErp() {
 
     await loadData("Stock de gustos actualizado");
     return true;
+  };
+
+  const performDeleteFlavor = async (flavor: IceCreamFlavor) => {
+    const response = await fetch("/api/erp/gustos", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: flavor.id }),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setNotice(data?.error ?? "No se pudo eliminar el gusto");
+      return false;
+    }
+
+    await loadData("Gusto eliminado");
+    return true;
+  };
+
+  const deleteFlavor = (flavor: IceCreamFlavor) => {
+    setDeleteConfirmation({
+      title: "Eliminar gusto",
+      description: `Vas a ocultar ${flavor.name} de caja y stock. El historial viejo sigue guardado.`,
+      confirmLabel: "Eliminar gusto",
+      onConfirm: () => performDeleteFlavor(flavor),
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmation) return;
+
+    setIsDeleting(true);
+    const deleted = await deleteConfirmation.onConfirm();
+    setIsDeleting(false);
+
+    if (deleted) {
+      setDeleteConfirmation(null);
+    }
   };
 
   const loadFlavorBatch = async (
@@ -1125,7 +1505,7 @@ export function HeladeriaErp() {
                 Caja operativa
               </div>
               <p className="mt-1 text-xs text-zinc-400">
-                MaÃ±ana y tarde separados en mÃ©tricas
+                MaÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ana y tarde separados en mÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tricas
               </p>
             </div>
           </div>
@@ -1144,6 +1524,16 @@ export function HeladeriaErp() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  onClick={() => setIsHelpOpen(true)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <CircleHelp className="size-4" />
+                  Ayuda
+                </Button>
                 <Badge className="max-w-80 truncate border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/10">
                   {notice}
                 </Badge>
@@ -1195,6 +1585,8 @@ export function HeladeriaErp() {
                 cancelCart={cancelCart}
                 handleProductClick={handleProductClick}
                 isCharging={isCharging}
+                lowFlavorStock={lowFlavorStock}
+                lowStock={lowStock}
                 paymentMethod={paymentMethod}
                 paymentMethods={paymentMethods}
                 query={query}
@@ -1227,6 +1619,7 @@ export function HeladeriaErp() {
               <HistorialView
                 expenses={expenses}
                 expenseHistory={expenseHistory}
+                saleItems={saleItems}
                 sales={sales}
               />
             )}
@@ -1234,9 +1627,11 @@ export function HeladeriaErp() {
             {activeView === "finanzas" && (
               <FinanzasView
                 expenses={expenses}
+                fixedExpenses={fixedExpenses}
                 grossRevenue={grossRevenue}
                 netProfit={netProfit}
                 saveExpenses={saveExpenses}
+                soldProductCost={soldProductCost}
                 totalExpenses={totalExpenses}
                 updateExpense={updateExpense}
               />
@@ -1254,6 +1649,8 @@ export function HeladeriaErp() {
             {activeView === "stock" && (
               <StockView
                 closeFlavorBatch={closeFlavorBatch}
+                deleteFlavor={deleteFlavor}
+                deleteProduct={deleteProduct}
                 flavors={iceCreamFlavors}
                 flavorUnitsInStock={flavorUnitsInStock}
                 flavorBatches={flavorBatches}
@@ -1261,13 +1658,31 @@ export function HeladeriaErp() {
                 lowStock={lowStock}
                 lowFlavorStock={lowFlavorStock}
                 products={products}
-                restockProduct={restockProduct}
                 saveProduct={saveProduct}
                 saveFlavor={saveFlavor}
                 unitsInStock={unitsInStock}
               />
             )}
           </section>
+
+          <HelpModal
+            help={activeHelp}
+            isOpen={isHelpOpen}
+            onClose={() => setIsHelpOpen(false)}
+          />
+          <DeleteConfirmModal
+            confirmLabel={deleteConfirmation?.confirmLabel ?? "Eliminar"}
+            description={deleteConfirmation?.description ?? ""}
+            isLoading={isDeleting}
+            isOpen={Boolean(deleteConfirmation)}
+            onCancel={() => {
+              if (!isDeleting) {
+                setDeleteConfirmation(null);
+              }
+            }}
+            onConfirm={confirmDelete}
+            title={deleteConfirmation?.title ?? "Confirmar eliminacion"}
+          />
         </main>
       </div>
     </div>
@@ -1332,6 +1747,8 @@ function CajaView({
   cancelCart,
   handleProductClick,
   isCharging,
+  lowFlavorStock,
+  lowStock,
   paymentMethod,
   paymentMethods,
   query,
@@ -1360,6 +1777,8 @@ function CajaView({
   cancelCart: () => void;
   handleProductClick: (product: Product) => void;
   isCharging: boolean;
+  lowFlavorStock: IceCreamFlavor[];
+  lowStock: Product[];
   paymentMethod: string;
   paymentMethods: string[];
   query: string;
@@ -1377,6 +1796,11 @@ function CajaView({
   toggleFlavor: (flavorName: string) => void;
 }) {
   const realCategories = categories.filter((item) => item !== "Todos");
+  const [showLowStockOnly, setShowLowStockOnly] = useState(false);
+  const [lowStockView, setLowStockView] = useState<"productos" | "gustos">(
+    "productos",
+  );
+  const [flavorSearch, setFlavorSearch] = useState("");
   const categorySelected = category !== "Todos";
   const cartQuantityByProduct = cartItems.reduce<Record<string, number>>(
     (acc, item) => {
@@ -1385,7 +1809,34 @@ function CajaView({
     },
     {},
   );
-  const flavorGroups = groupFlavorsByCategory(flavors);
+  const visibleFlavorGroups = groupFlavorsByCategory(
+    flavors.filter((flavor) => {
+      const normalizedQuery = flavorSearch.trim().toLowerCase();
+      return (
+        !normalizedQuery ||
+        flavor.name.toLowerCase().includes(normalizedQuery) ||
+        flavor.category.toLowerCase().includes(normalizedQuery)
+      );
+    }),
+  );
+  const displayedProducts = showLowStockOnly
+    ? filteredProducts.filter((product) => product.stock <= product.minStock)
+    : filteredProducts;
+  const displayedLowFlavors = lowFlavorStock
+    .filter((flavor) => {
+      const normalizedQuery = query.trim().toLowerCase();
+      return (
+        !normalizedQuery ||
+        flavor.name.toLowerCase().includes(normalizedQuery) ||
+        flavor.category.toLowerCase().includes(normalizedQuery)
+      );
+    })
+    .sort((left, right) => left.name.localeCompare(right.name, "es-AR"));
+  const visibleCount =
+    showLowStockOnly && lowStockView === "gustos"
+      ? displayedLowFlavors.length
+      : displayedProducts.length;
+  const showCategoryBrowser = !categorySelected && !showLowStockOnly;
   const categoryCards = realCategories.map((item) => ({
       id: item,
       label: item,
@@ -1410,6 +1861,10 @@ function CajaView({
       subtitle: "Abrir categoria",
     }));
 
+  useEffect(() => {
+    setFlavorSearch("");
+  }, [selectedProduct]);
+
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_390px]">
       <DarkPanel className="overflow-hidden">
@@ -1417,10 +1872,36 @@ function CajaView({
           icon={ShoppingCart}
           title="Caja"
           subtitle="Elegi una categoria y despues el producto"
-          right={<StatusBadge tone="cyan" label={`${filteredProducts.length} visibles`} />}
+          right={
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                className={cn(
+                  "border-amber-300/30 font-semibold hover:bg-amber-300/20",
+                  showLowStockOnly
+                    ? "bg-amber-300 text-zinc-950"
+                    : "bg-amber-300/10 text-amber-100",
+                )}
+                onClick={() => {
+                  setShowLowStockOnly((current) => !current);
+                  setLowStockView("productos");
+                  setQuery("");
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <TimerReset className="size-4" />
+                Bajo stock
+              </Button>
+              <StatusBadge
+                tone={showLowStockOnly ? "amber" : "cyan"}
+                label={`${visibleCount} visibles`}
+              />
+            </div>
+          }
         />
 
-        {!categorySelected ? (
+        {showCategoryBrowser ? (
           <div className="space-y-4 p-4">
             <div>
               <p className="font-semibold text-zinc-100">Categorias</p>
@@ -1428,6 +1909,36 @@ function CajaView({
                 Toca una categoria para ver sus productos.
               </p>
             </div>
+
+            {(lowStock.length > 0 || lowFlavorStock.length > 0) && (
+              <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="font-semibold text-amber-100">
+                      Hay cosas para reponer
+                    </p>
+                    <p className="mt-1 text-sm text-amber-50/80">
+                      {lowStock.length} producto{lowStock.length === 1 ? "" : "s"} y{" "}
+                      {lowFlavorStock.length} gusto
+                      {lowFlavorStock.length === 1 ? "" : "s"} estan en bajo stock.
+                    </p>
+                  </div>
+                  <Button
+                    className="border-amber-300/30 bg-black/20 text-amber-100 hover:bg-black/30"
+                    onClick={() => {
+                      setShowLowStockOnly(true);
+                      setLowStockView("productos");
+                      setQuery("");
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    Ver faltantes
+                  </Button>
+                </div>
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {categoryCards.map((item) => {
@@ -1468,6 +1979,9 @@ function CajaView({
                     <Button
                       className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                       onClick={() => {
+                        if (showLowStockOnly) {
+                          setShowLowStockOnly(false);
+                        }
                         setCategory("Todos");
                         setQuery("");
                       }}
@@ -1479,9 +1993,13 @@ function CajaView({
                     </Button>
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-zinc-100">{category}</p>
+                    <p className="truncate font-semibold text-zinc-100">
+                      {showLowStockOnly && !categorySelected ? "Bajo stock" : category}
+                    </p>
                     <p className="text-sm text-zinc-500">
-                      {filteredProducts.length} producto{filteredProducts.length === 1 ? "" : "s"}
+                      {showLowStockOnly && lowStockView === "gustos"
+                        ? `${displayedLowFlavors.length} gusto${displayedLowFlavors.length === 1 ? "" : "s"}`
+                        : `${displayedProducts.length} producto${displayedProducts.length === 1 ? "" : "s"}`}
                     </p>
                   </div>
                 </div>
@@ -1492,7 +2010,11 @@ function CajaView({
                     <input
                       className="h-11 w-full rounded-lg border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
                       onChange={(event) => setQuery(event.target.value)}
-                      placeholder={`Buscar en ${category.toLowerCase()}`}
+                      placeholder={
+                        showLowStockOnly && !categorySelected
+                          ? "Buscar faltantes"
+                          : `Buscar en ${category.toLowerCase()}`
+                      }
                       value={query}
                     />
                   </div>
@@ -1500,11 +2022,67 @@ function CajaView({
               </div>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
-              {filteredProducts.map((product) => {
+            {showLowStockOnly && (
+              <div
+                className={cn(
+                  "rounded-lg border px-4 py-3",
+                  showLowStockOnly
+                    ? "border-amber-300/20 bg-amber-300/10"
+                    : "border-white/10 bg-black/20",
+                )}
+              >
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <p className="font-semibold text-zinc-100">
+                      Bajo stock
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      {showLowStockOnly && lowStockView === "gustos"
+                        ? `${lowFlavorStock.length} gusto${lowFlavorStock.length === 1 ? "" : "s"} estan en o por debajo del minimo.`
+                        : `${lowStock.length} producto${lowStock.length === 1 ? "" : "s"} estan en o por debajo del minimo.`}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      className={cn(
+                        "font-semibold hover:bg-amber-300/20",
+                        lowStockView === "productos"
+                          ? "border-amber-300 bg-amber-300 text-zinc-950"
+                          : "border-amber-300/30 bg-white/5 text-zinc-100",
+                      )}
+                      onClick={() => setLowStockView("productos")}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      Productos
+                    </Button>
+                    <Button
+                      className={cn(
+                        "font-semibold hover:bg-amber-300/20",
+                        lowStockView === "gustos"
+                          ? "border-amber-300 bg-amber-300 text-zinc-950"
+                          : "border-amber-300/30 bg-white/5 text-zinc-100",
+                      )}
+                      onClick={() => setLowStockView("gustos")}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      Gustos
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(!showLowStockOnly || lowStockView === "productos") && (
+              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+                {displayedProducts.map((product) => {
                 const quantityInCart = cartQuantityByProduct[product.id] ?? 0;
                 const reachedLimit = quantityInCart >= product.stock;
                 const unavailable = product.stock <= 0 || reachedLimit;
+                const isLow = product.stock <= product.minStock;
 
                 return (
                   <button
@@ -1512,6 +2090,8 @@ function CajaView({
                       "group overflow-hidden rounded-lg border text-left transition disabled:cursor-not-allowed",
                       unavailable
                         ? "border-white/5 bg-zinc-900/70 opacity-45 grayscale"
+                        : isLow
+                          ? "border-amber-300/40 bg-[#191512] hover:-translate-y-0.5 hover:border-amber-300/60"
                         : "border-white/10 bg-[#121516] hover:-translate-y-0.5 hover:border-cyan-300/50 hover:bg-[#161b1c]",
                     )}
                     disabled={unavailable}
@@ -1538,6 +2118,8 @@ function CajaView({
                         <Badge className="border-white/10 bg-black/50 text-zinc-100 hover:bg-black/50">
                           {reachedLimit
                             ? "Limite en carrito"
+                            : isLow
+                              ? "Bajo stock"
                             : product.maxFlavors > 0
                               ? `Hasta ${product.maxFlavors} gusto${
                                   product.maxFlavors > 1 ? "s" : ""
@@ -1554,15 +2136,82 @@ function CajaView({
                         <p className="text-lg font-semibold text-cyan-100">
                           {formatCurrency(product.price)}
                         </p>
-                        <p className="text-xs text-zinc-500">
+                        <p className={cn("text-xs", isLow ? "text-amber-200" : "text-zinc-500")}>
                           {quantityInCart}/{product.stock} {product.unit}
                         </p>
                       </div>
                     </div>
                   </button>
                 );
-              })}
-            </div>
+                })}
+              </div>
+            )}
+
+            {showLowStockOnly && lowStockView === "gustos" && (
+              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+                {displayedLowFlavors.map((flavor) => (
+                  <div
+                    className="rounded-lg border border-amber-300/30 bg-[#191512] p-4"
+                    key={flavor.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className="size-3 rounded-full border border-black/10"
+                            style={{ backgroundColor: flavor.color }}
+                          />
+                          <p className="truncate font-semibold text-zinc-100">
+                            {flavor.name}
+                          </p>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
+                            {flavor.category}
+                          </Badge>
+                        </div>
+                      </div>
+                      <Badge className="shrink-0 border-amber-300/20 bg-amber-300/10 text-amber-100 hover:bg-amber-300/10">
+                        Reponer
+                      </Badge>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3">
+                        <p className="text-xs uppercase text-zinc-500">Stock</p>
+                        <p className="mt-2 text-2xl font-semibold leading-none text-amber-100">
+                          {flavor.stock}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {flavor.unit}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3">
+                        <p className="text-xs uppercase text-zinc-500">Minimo</p>
+                        <p className="mt-2 text-2xl font-semibold leading-none text-zinc-100">
+                          {flavor.minStock}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {flavor.unit}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {((!showLowStockOnly || lowStockView === "productos") && !displayedProducts.length) && (
+              <div className="rounded-lg border border-white/10 bg-black/20 p-5 text-center text-sm text-zinc-500">
+                No hay productos para mostrar con ese filtro.
+              </div>
+            )}
+
+            {showLowStockOnly && lowStockView === "gustos" && !displayedLowFlavors.length && (
+              <div className="rounded-lg border border-white/10 bg-black/20 p-5 text-center text-sm text-zinc-500">
+                No hay gustos para mostrar con ese filtro.
+              </div>
+            )}
           </div>
         )}
 
@@ -1596,7 +2245,7 @@ function CajaView({
                   <div className="absolute bottom-4 left-4 right-4">
                     <p className="text-xl font-semibold">{selectedProduct.name}</p>
                     <p className="mt-1 text-sm text-zinc-300">
-                      ElegÃ­ {selectedProduct.maxFlavors} gusto
+                      ElegÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ {selectedProduct.maxFlavors} gusto
                       {selectedProduct.maxFlavors > 1 ? "s" : ""}
                     </p>
                   </div>
@@ -1609,7 +2258,7 @@ function CajaView({
                     </div>
                   )}
                   <div className="mb-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                    Si el stock estimado de un gusto llega a cero, igual podÃ©s vender y el sistema lo deja en negativo para recalibrar la prÃ³xima tanda.
+                    Si el stock estimado de un gusto llega a cero, igual podÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s vender y el sistema lo deja en negativo para recalibrar la prÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³xima tanda.
                   </div>
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
@@ -1621,6 +2270,16 @@ function CajaView({
                     <p className="text-lg font-semibold text-cyan-100">
                       {formatCurrency(selectedProduct.price)}
                     </p>
+                  </div>
+
+                  <div className="relative mb-3">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+                    <input
+                      className="h-11 w-full rounded-lg border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
+                      onChange={(event) => setFlavorSearch(event.target.value)}
+                      placeholder="Buscar sabor rapido"
+                      value={flavorSearch}
+                    />
                   </div>
 
                   <div className="mb-3 min-h-11 rounded-lg border border-white/10 bg-black/20 p-2">
@@ -1639,13 +2298,13 @@ function CajaView({
                       </div>
                     ) : (
                       <p className="px-1 py-1.5 text-xs text-zinc-500">
-                        Toca los gustos. PodÃ©s repetir el mismo sabor.
+                        Toca los gustos. PodÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s repetir el mismo sabor.
                       </p>
                     )}
                   </div>
 
                   <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
-                    {flavorGroups.map((group) => (
+                    {visibleFlavorGroups.map((group) => (
                       <div className="space-y-2" key={group.category}>
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-zinc-100">
@@ -1708,6 +2367,11 @@ function CajaView({
                         </div>
                       </div>
                     ))}
+                    {!visibleFlavorGroups.length && (
+                      <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-center text-sm text-zinc-500">
+                        No hay gustos que coincidan con esa busqueda.
+                      </div>
+                    )}
                   </div>
 
                   <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -1885,13 +2549,13 @@ function AnalisisView({
     return saleDate >= monthStart && saleDate <= monthEnd;
   });
   const grossRevenue = filteredSales.reduce((total, sale) => total + sale.total, 0);
-  const totalExpenses = calculateExpensesBetween(
+  const expenseBreakdown = calculateExpenseBreakdownBetween(
     monthStart,
     monthEnd,
     expenses,
     expenseHistory,
   );
-  const netProfit = grossRevenue - totalExpenses;
+  const fixedExpenses = expenseBreakdown.fixed;
   const morningRevenue = filteredSales
     .filter((sale) => getSaleHour(sale) < 14)
     .reduce((total, sale) => total + sale.total, 0);
@@ -1902,6 +2566,11 @@ function AnalisisView({
     const itemDate = new Date(item.createdAt);
     return itemDate >= monthStart && itemDate <= monthEnd;
   });
+  const soldProductCost = filteredSaleItems.reduce(
+    (total, item) => total + item.cost * item.quantity,
+    0,
+  );
+  const netProfit = grossRevenue - soldProductCost - fixedExpenses;
   const soldProducts = filteredSaleItems.reduce(
     (total, item) => total + item.quantity,
     0,
@@ -1966,21 +2635,27 @@ function AnalisisView({
         />
         <MetricCard
           icon={ArrowDownCircle}
-          label="Gastos cargados"
+          label="Costo de productos vendidos"
           tone="amber"
-          value={formatCurrency(totalExpenses)}
+          value={formatCurrency(soldProductCost)}
         />
         <MetricCard
-          icon={BadgeDollarSign}
-          label="Ganancia total neta"
-          tone={netProfit >= 0 ? "green" : "red"}
-          value={formatCurrency(netProfit)}
+          icon={WalletCards}
+          label="Gastos fijos"
+          tone={fixedExpenses > 0 ? "amber" : "neutral"}
+          value={formatCurrency(fixedExpenses)}
         />
         <MetricCard
           icon={ReceiptText}
           label="Productos vendidos"
           tone="neutral"
           value={String(soldProducts)}
+        />
+        <MetricCard
+          icon={BadgeDollarSign}
+          label="Ganancia real"
+          tone={netProfit >= 0 ? "green" : "red"}
+          value={formatCurrency(netProfit)}
         />
       </div>
 
@@ -2020,10 +2695,10 @@ function AnalisisView({
           <PanelHeader
             icon={LayoutDashboard}
             title="Ventas por turno"
-            subtitle="MaÃ±ana antes de las 14:00, tarde desde las 14:00"
+            subtitle="MaÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ana antes de las 14:00, tarde desde las 14:00"
           />
           <div className="grid gap-3 p-4 sm:grid-cols-2">
-            <ShiftCard label="MaÃ±ana" value={morningRevenue} icon={Coffee} />
+            <ShiftCard label="MaÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±ana" value={morningRevenue} icon={Coffee} />
             <ShiftCard label="Tarde" value={afternoonRevenue} icon={Flame} />
           </div>
         </DarkPanel>
@@ -2279,8 +2954,8 @@ function AnalisisView({
       <DarkPanel>
         <PanelHeader
           icon={CalendarClock}
-          title="HistÃ³rico por aÃ±o"
-          subtitle="Resumen de todos los aÃ±os registrados"
+          title="HistÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico por aÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±o"
+          subtitle="Resumen de todos los aÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±os registrados"
         />
         <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
           {yearlyRows.length ? (
@@ -2289,14 +2964,14 @@ function AnalisisView({
                 className="rounded-lg border border-white/10 bg-black/20 p-4"
                 key={row.year}
               >
-                <p className="text-sm text-zinc-500">AÃ±o {row.year}</p>
+                <p className="text-sm text-zinc-500">AÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±o {row.year}</p>
                 <p className="mt-2 text-xl font-semibold text-cyan-100">
                   {formatCurrency(row.total)}
                 </p>
               </div>
             ))
           ) : (
-            <p className="text-sm text-zinc-500">TodavÃ­a no hay ventas histÃ³ricas.</p>
+            <p className="text-sm text-zinc-500">TodavÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a no hay ventas histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ricas.</p>
           )}
         </div>
       </DarkPanel>
@@ -2306,18 +2981,28 @@ function AnalisisView({
       <DarkPanel>
         <PanelHeader
           icon={DollarSign}
-          title="Resumen de gastos aplicados"
-          subtitle="Lo que se resta para calcular ganancia neta"
+          title="Resumen de costos y gastos"
+          subtitle="Todo lo que se resta para calcular la ganancia real"
         />
-        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-3">
-          {expenses.map((expense) => (
-            <div className="rounded-lg border border-white/10 bg-black/20 p-4" key={expense.key}>
-              <p className="text-sm text-zinc-500">{expense.label}</p>
-              <p className="mt-2 text-xl font-semibold text-amber-100">
-                {formatCurrency(expense.amount)}
-              </p>
-            </div>
-          ))}
+        <div className="grid gap-5 p-4 xl:grid-cols-3">
+          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+            <p className="text-sm text-zinc-500">Costo de productos vendidos</p>
+            <p className="mt-2 text-2xl font-semibold text-amber-100">
+              {formatCurrency(soldProductCost)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+            <p className="text-sm text-zinc-500">Gastos fijos</p>
+            <p className="mt-2 text-2xl font-semibold text-amber-100">
+              {formatCurrency(fixedExpenses)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4">
+            <p className="text-sm text-emerald-100">Ganancia real</p>
+            <p className="mt-2 text-2xl font-semibold text-emerald-200">
+              {formatCurrency(netProfit)}
+            </p>
+          </div>
         </div>
       </DarkPanel>
       )}
@@ -2370,10 +3055,29 @@ const endOfDay = (date: Date) => {
   return next;
 };
 
-const currentExpenseTotal = (expenses: Expense[]) =>
-  expenses.reduce((total, expense) => total + expense.amount, 0);
+const normalizeExpenseCategory = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
-const getExpenseSnapshotForDate = (
+const isProductionExpense = (expense: { category: string }) =>
+  normalizeExpenseCategory(expense.category) === "produccion";
+
+const currentExpenseBreakdown = (expenses: Expense[]) =>
+  expenses.reduce(
+    (acc, expense) => {
+      if (!isProductionExpense(expense)) {
+        acc.fixed += expense.amount;
+        acc.total += expense.amount;
+      }
+      return acc;
+    },
+    { fixed: 0, production: 0, total: 0 },
+  );
+
+const getExpenseBreakdownForDate = (
   date: Date,
   expenses: Expense[],
   expenseHistory: ExpenseHistory[],
@@ -2385,30 +3089,37 @@ const getExpenseSnapshotForDate = (
   const activeSnapshot = sortedHistory
     .filter((snapshot) => new Date(snapshot.startsAt) <= date)
     .at(-1);
+  const sourceExpenses =
+    activeSnapshot?.expenses ??
+    sortedHistory[0]?.expenses ??
+    expenses;
 
-  return activeSnapshot?.total ?? sortedHistory[0]?.total ?? currentExpenseTotal(expenses);
+  return currentExpenseBreakdown(sourceExpenses);
 };
 
-const calculateExpensesBetween = (
+const calculateExpenseBreakdownBetween = (
   start: Date,
   end: Date,
   expenses: Expense[],
   expenseHistory: ExpenseHistory[],
 ) => {
-  let total = 0;
+  const breakdown = { fixed: 0, production: 0, total: 0 };
   const cursor = startOfDay(start);
   const finalDay = startOfDay(end);
 
   while (cursor <= finalDay) {
-    total += getExpenseSnapshotForDate(
+    const snapshot = getExpenseBreakdownForDate(
       endOfDay(cursor),
       expenses,
       expenseHistory,
-    ) / 30;
+    );
+    breakdown.fixed += snapshot.fixed / 30;
+    breakdown.production += snapshot.production / 30;
+    breakdown.total += snapshot.total / 30;
     cursor.setDate(cursor.getDate() + 1);
   }
 
-  return total;
+  return breakdown;
 };
 
 const formatShortDate = (date: Date) =>
@@ -2425,14 +3136,28 @@ const getSalesBetween = (sales: Sale[], start: Date, end: Date) =>
     return saleDate >= start && saleDate <= end;
   });
 
-const summarizeSales = (sales: Sale[], expenseAmount: number): HistoryRow => {
+const getSaleItemsBetween = (saleItems: SaleItem[], start: Date, end: Date) =>
+  saleItems.filter((item) => {
+    const itemDate = new Date(item.createdAt);
+    return itemDate >= start && itemDate <= end;
+  });
+
+const summarizeSales = (
+  sales: Sale[],
+  saleItems: SaleItem[],
+  expenseBreakdown: { total: number },
+): HistoryRow => {
   const gross = sales.reduce((total, sale) => total + sale.total, 0);
   const items = sales.reduce((total, sale) => total + sale.items, 0);
+  const soldProductCost = saleItems.reduce(
+    (total, item) => total + item.cost * item.quantity,
+    0,
+  );
 
   return {
     label: "",
     gross,
-    net: gross - expenseAmount,
+    net: gross - soldProductCost - expenseBreakdown.total,
     items,
   };
 };
@@ -2440,10 +3165,12 @@ const summarizeSales = (sales: Sale[], expenseAmount: number): HistoryRow => {
 function HistorialView({
   expenses,
   expenseHistory,
+  saleItems,
   sales,
 }: {
   expenses: Expense[];
   expenseHistory: ExpenseHistory[];
+  saleItems: SaleItem[];
   sales: Sale[];
 }) {
   const [activeHistoryView, setActiveHistoryView] = useState<
@@ -2465,7 +3192,8 @@ function HistorialView({
     );
     const summary = summarizeSales(
       getSalesBetween(sales, start, end),
-      calculateExpensesBetween(start, end, expenses, expenseHistory),
+      getSaleItemsBetween(saleItems, start, end),
+      calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
     );
 
     return {
@@ -2485,7 +3213,8 @@ function HistorialView({
     );
     const summary = summarizeSales(
       getSalesBetween(sales, day, endOfDay(day)),
-      calculateExpensesBetween(day, endOfDay(day), expenses, expenseHistory),
+      getSaleItemsBetween(saleItems, day, endOfDay(day)),
+      calculateExpenseBreakdownBetween(day, endOfDay(day), expenses, expenseHistory),
     );
 
     return {
@@ -2500,7 +3229,8 @@ function HistorialView({
     const end = endOfDay(new Date(currentYear, index + 1, 0));
     const summary = summarizeSales(
       getSalesBetween(sales, start, end),
-      calculateExpensesBetween(start, end, expenses, expenseHistory),
+      getSaleItemsBetween(saleItems, start, end),
+      calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
     );
 
     return {
@@ -2523,7 +3253,8 @@ function HistorialView({
     const end = endOfDay(new Date(year, 11, 31));
     const summary = summarizeSales(
       getSalesBetween(sales, start, end),
-      calculateExpensesBetween(start, end, expenses, expenseHistory),
+      getSaleItemsBetween(saleItems, start, end),
+      calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
     );
 
     return {
@@ -2567,7 +3298,7 @@ function HistorialView({
           <HistoryTable
             icon={Lightbulb}
             rows={dailyRows}
-            title="Ingresos diarios (Ãºltima semana)"
+            title="Ingresos diarios (ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âºltima semana)"
             totalLabel="Total semana"
           />
         )}
@@ -2584,7 +3315,7 @@ function HistorialView({
             icon={CalendarClock}
             rows={monthlyRows}
             title="Ingresos mensuales"
-            totalLabel="Total aÃ±o"
+            totalLabel="Total aÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â±o"
           />
         )}
         {activeHistoryView === "anual" && (
@@ -2592,7 +3323,7 @@ function HistorialView({
             icon={WalletCards}
             rows={annualRows}
             title="Ingresos anuales"
-            totalLabel="Total histÃ³rico"
+            totalLabel="Total histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico"
           />
         )}
       </div>
@@ -2622,13 +3353,13 @@ function HistoryTable({
 
   return (
     <DarkPanel>
-      <PanelHeader icon={icon} title={title} subtitle="Resumen histÃ³rico" />
+      <PanelHeader icon={icon} title={title} subtitle="Resumen histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico" />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[680px] text-left text-sm">
           <thead className="text-xs uppercase text-zinc-500">
             <tr>
               <th className="pb-2 font-semibold">Periodo</th>
-              <th className="pb-2 text-right font-semibold">Total ganÃ³</th>
+              <th className="pb-2 text-right font-semibold">Total ganÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³</th>
               <th className="pb-2 text-right font-semibold">Neto gastos</th>
               <th className="pb-2 text-right font-semibold">Productos</th>
             </tr>
@@ -2684,47 +3415,66 @@ function HistoryTable({
 
 function FinanzasView({
   expenses,
+  fixedExpenses,
   grossRevenue,
   netProfit,
   saveExpenses,
+  soldProductCost,
   totalExpenses,
   updateExpense,
 }: {
   expenses: Expense[];
+  fixedExpenses: number;
   grossRevenue: number;
   netProfit: number;
   saveExpenses: () => void;
+  soldProductCost: number;
   totalExpenses: number;
   updateExpense: (key: string, value: number) => void;
 }) {
+  const fixedExpenseItems = expenses.filter((expense) => !isProductionExpense(expense));
+  const ignoredProductionItems = expenses.filter((expense) => isProductionExpense(expense));
+
   return (
     <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
       <DarkPanel>
         <PanelHeader
           icon={WalletCards}
           title="Ganancia del local"
-          subtitle="Bruto menos sueldos, luz, agua, gas, alquiler y otros"
+          subtitle="Ventas menos costo vendido y gastos fijos"
         />
         <div className="space-y-4 p-4">
           <FinanceLine
             icon={ArrowUpCircle}
-            label="Total sin restar gastos"
+            label="Total vendido"
             tone="cyan"
             value={grossRevenue}
           />
           <FinanceLine
             icon={ArrowDownCircle}
-            label="Total de gastos"
+            label="Costo de productos vendidos"
             tone="amber"
-            value={totalExpenses}
+            value={soldProductCost}
+          />
+          <FinanceLine
+            icon={WalletCards}
+            label="Gastos fijos"
+            tone="amber"
+            value={fixedExpenses}
+          />
+          <FinanceLine
+            icon={DollarSign}
+            label="Total descontado"
+            tone="amber"
+            value={soldProductCost + totalExpenses}
           />
           <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-5">
-            <p className="text-sm text-emerald-100">Ganancia total final</p>
+            <p className="text-sm text-emerald-100">Ganancia real final</p>
             <p className="mt-2 text-4xl font-semibold text-emerald-200">
               {formatCurrency(netProfit)}
             </p>
             <p className="mt-3 text-sm text-zinc-400">
-              FÃ³rmula: ventas totales - gastos del negocio.
+              Formula: ventas - costo vendido - gastos fijos.
             </p>
           </div>
         </div>
@@ -2734,27 +3484,49 @@ function FinanzasView({
         <PanelHeader
           icon={Lightbulb}
           title="Gastos que se descuentan"
-          subtitle="Cambia los valores y guarda para recalcular"
+          subtitle="Solo se descuentan gastos fijos del local"
         />
-        <div className="grid gap-3 p-4 sm:grid-cols-2">
-          {expenses.map((expense) => (
-            <label
-              className="rounded-lg border border-white/10 bg-black/20 p-4"
-              key={expense.key}
-            >
-              <span className="text-sm font-semibold text-zinc-200">{expense.label}</span>
-              <span className="mt-1 block text-xs text-zinc-500">{expense.category}</span>
-              <input
-                className="mt-3 h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
-                min={0}
-                onChange={(event) =>
-                  updateExpense(expense.key, Number(event.target.value || 0))
-                }
-                type="number"
-                value={expense.amount}
-              />
-            </label>
-          ))}
+        <div className="space-y-5 p-4">
+          {ignoredProductionItems.length > 0 && (
+            <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-4">
+              <p className="font-semibold text-amber-100">
+                Los gastos de produccion manuales ya no se descuentan
+              </p>
+              <p className="mt-1 text-sm text-amber-50/80">
+                Ahora la ganancia usa el costo del producto vendido para ser mas precisa.
+              </p>
+            </div>
+          )}
+
+          <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
+            <div>
+              <p className="font-semibold text-zinc-100">Gastos fijos del local</p>
+              <p className="mt-1 text-sm text-zinc-500">
+                Sueldos, luz, agua, gas, alquiler y otros gastos generales.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {fixedExpenseItems.map((expense) => (
+                <label
+                  className="rounded-lg border border-white/10 bg-[#080a0c] p-4"
+                  key={expense.key}
+                >
+                  <span className="text-sm font-semibold text-zinc-200">{expense.label}</span>
+                  <span className="mt-1 block text-xs text-zinc-500">{expense.category}</span>
+                  <input
+                    className="mt-3 h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
+                    min={0}
+                    onChange={(event) =>
+                      updateExpense(expense.key, Number(event.target.value || 0))
+                    }
+                    type="number"
+                    value={expense.amount}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
         <div className="border-t border-white/10 p-4">
           <Button
@@ -2769,7 +3541,6 @@ function FinanzasView({
     </div>
   );
 }
-
 function EmpleadosView({
   attendance,
   registerAttendance,
@@ -3154,6 +3925,8 @@ function EmpleadosView({
 
 function StockView({
   closeFlavorBatch,
+  deleteFlavor,
+  deleteProduct,
   flavors,
   flavorBatches,
   flavorUnitsInStock,
@@ -3161,12 +3934,13 @@ function StockView({
   lowStock,
   lowFlavorStock,
   products,
-  restockProduct,
   saveProduct,
   saveFlavor,
   unitsInStock,
 }: {
   closeFlavorBatch: (batch: FlavorBatch, currentStock: number) => Promise<boolean>;
+  deleteFlavor: (flavor: IceCreamFlavor) => void;
+  deleteProduct: (product: Product) => void;
   flavors: IceCreamFlavor[];
   flavorBatches: FlavorBatch[];
   flavorUnitsInStock: number;
@@ -3178,7 +3952,6 @@ function StockView({
   lowStock: Product[];
   lowFlavorStock: IceCreamFlavor[];
   products: Product[];
-  restockProduct: (id: string, amount: number) => void;
   saveProduct: (product: ProductForm, previousStock?: number) => Promise<boolean>;
   saveFlavor: (flavor: FlavorForm) => Promise<boolean>;
   unitsInStock: number;
@@ -3221,6 +3994,8 @@ function StockView({
   const [productQuery, setProductQuery] = useState("");
   const [productCategory, setProductCategory] = useState("Todos");
   const [flavorQuery, setFlavorQuery] = useState("");
+  const [showOnlyLowProducts, setShowOnlyLowProducts] = useState(false);
+  const [showOnlyLowFlavors, setShowOnlyLowFlavors] = useState(false);
   const activeBatchesByFlavor = new Map(
     flavorBatches
       .filter((batch) => batch.status === "activa")
@@ -3253,6 +4028,9 @@ function StockView({
       if (leftLow !== rightLow) return leftLow - rightLow;
       return left.name.localeCompare(right.name);
     });
+  const visibleProducts = showOnlyLowProducts
+    ? filteredProducts.filter((product) => product.stock <= product.minStock)
+    : filteredProducts;
   const filteredFlavors = flavors
     .filter((flavor) => {
       const normalizedQuery = flavorQuery.trim().toLowerCase();
@@ -3268,7 +4046,10 @@ function StockView({
       if (leftLow !== rightLow) return leftLow - rightLow;
       return left.name.localeCompare(right.name);
     });
-  const flavorGroups = groupFlavorsByCategory(filteredFlavors);
+  const visibleFlavors = showOnlyLowFlavors
+    ? filteredFlavors.filter((flavor) => flavor.stock <= flavor.minStock)
+    : filteredFlavors;
+  const flavorGroups = groupFlavorsByCategory(visibleFlavors);
 
   return (
     <div className="space-y-5">
@@ -3298,6 +4079,76 @@ function StockView({
           value={String(flavorUnitsInStock)}
         />
       </div>
+
+      {(lowStock.length > 0 || lowFlavorStock.length > 0) && (
+        <DarkPanel>
+          <div className="space-y-4 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="font-semibold text-zinc-100">Alertas rapidas de stock</p>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Marca enseguida lo que esta en o por debajo del minimo.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+                  onClick={() => {
+                    setStockTab("productos");
+                    setShowOnlyLowProducts(true);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {lowStock.length} productos bajos
+                </Button>
+                <Button
+                  className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+                  onClick={() => {
+                    setStockTab("gustos");
+                    setShowOnlyLowFlavors(true);
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {lowFlavorStock.length} gustos bajos
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+                <p className="text-sm font-semibold text-zinc-100">Productos a reponer</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {lowStock.slice(0, 8).map((product) => (
+                    <Badge
+                      className="border-amber-300/20 bg-amber-300/10 text-amber-100 hover:bg-amber-300/10"
+                      key={product.id}
+                    >
+                      {product.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+                <p className="text-sm font-semibold text-zinc-100">Gustos a reponer</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {lowFlavorStock.slice(0, 8).map((flavor) => (
+                    <Badge
+                      className="border-amber-300/20 bg-amber-300/10 text-amber-100 hover:bg-amber-300/10"
+                      key={flavor.id}
+                    >
+                      {flavor.name}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </DarkPanel>
+      )}
 
       <DarkPanel>
         <div className="flex flex-wrap gap-2 p-4">
@@ -3331,40 +4182,61 @@ function StockView({
             right={
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                onClick={async () => {
-                  if (!isCreatingFlavor) {
-                    setIsCreatingFlavor(true);
-                    return;
-                  }
-
-                  const saved = await saveFlavor(newFlavor);
-                  if (saved) {
-                    setNewFlavor(emptyFlavor);
-                    setIsCreatingFlavor(false);
-                  }
+                onClick={() => {
+                  setIsCreatingFlavor(true);
+                  setEditingFlavorId(null);
+                  setEditingFlavor(null);
                 }}
                 size="sm"
                 type="button"
               >
                 <Plus className="size-4" />
-                {isCreatingFlavor ? "Guardar gusto" : "Agregar gusto"}
+                Agregar gusto
               </Button>
             }
           />
           <div className="space-y-4 p-4">
-            <div className="relative max-w-sm">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
-              <input
-                className="h-11 w-full rounded-lg border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
-                onChange={(event) => setFlavorQuery(event.target.value)}
-                placeholder="Buscar gusto"
-                value={flavorQuery}
-              />
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="relative max-w-sm">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
+                <input
+                  className="h-11 w-full rounded-lg border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
+                  onChange={(event) => setFlavorQuery(event.target.value)}
+                  placeholder="Buscar gusto"
+                  value={flavorQuery}
+                />
+              </div>
+              <Button
+                className={cn(
+                  "font-semibold hover:bg-amber-300/20",
+                  showOnlyLowFlavors
+                    ? "border-amber-300 bg-amber-300 text-zinc-950"
+                    : "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                )}
+                onClick={() => setShowOnlyLowFlavors((current) => !current)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <TimerReset className="size-4" />
+                {showOnlyLowFlavors ? "Ver todos" : "Solo bajo stock"}
+              </Button>
             </div>
+
+            {lowFlavorStock.length > 0 && (
+              <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 px-4 py-3">
+                <p className="font-semibold text-amber-100">
+                  {lowFlavorStock.length} gusto{lowFlavorStock.length === 1 ? "" : "s"} para reponer
+                </p>
+                <p className="mt-1 text-sm text-amber-50/80">
+                  Usa este filtro para ver rapido los sabores que estan bajos.
+                </p>
+              </div>
+            )}
 
             {isCreatingFlavor && (
               <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                   <InlineInput
                     label="Nombre"
                     onChange={(value) =>
@@ -3423,7 +4295,21 @@ function StockView({
                     />
                   </label>
                 </div>
-                <div className="flex justify-end">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                    onClick={async () => {
+                      const saved = await saveFlavor(newFlavor);
+                      if (saved) {
+                        setNewFlavor(emptyFlavor);
+                        setIsCreatingFlavor(false);
+                      }
+                    }}
+                    type="button"
+                    variant="outline"
+                  >
+                    Guardar
+                  </Button>
                   <Button
                     className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                     onClick={() => {
@@ -3498,7 +4384,7 @@ function StockView({
                       </div>
 
                       {isEditing ? (
-                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                           <InlineInput
                             label="Gusto"
                             onChange={(value) =>
@@ -3614,18 +4500,14 @@ function StockView({
                               Editar
                             </Button>
                             <Button
-                              className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
-                              onClick={async () => {
-                                await saveFlavor({
-                                  ...flavor,
-                                  stock: flavor.stock + 160,
-                                });
-                              }}
+                              className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
+                              onClick={() => deleteFlavor(flavor)}
                               size="sm"
                               type="button"
                               variant="outline"
                             >
-                              +160
+                              <Trash2 className="size-4" />
+                              Eliminar
                             </Button>
                             {activeBatch ? (
                               <Button
@@ -3727,23 +4609,15 @@ function StockView({
             right={
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                onClick={async () => {
-                  if (!isCreatingProduct) {
-                    setIsCreatingProduct(true);
-                    return;
-                  }
-
-                  const saved = await saveProduct(newProduct);
-                  if (saved) {
-                    setNewProduct(emptyProduct);
-                    setIsCreatingProduct(false);
-                  }
+                onClick={() => {
+                  setIsCreatingProduct(true);
+                  setEditingId(null);
                 }}
                 size="sm"
                 type="button"
               >
                 <Plus className="size-4" />
-                {isCreatingProduct ? "Guardar producto" : "Agregar producto"}
+                Agregar producto
               </Button>
             }
           />
@@ -3774,13 +4648,53 @@ function StockView({
                     {item}
                   </button>
                 ))}
+                <Button
+                  className={cn(
+                    "font-semibold hover:bg-amber-300/20",
+                    showOnlyLowProducts
+                      ? "border-amber-300 bg-amber-300 text-zinc-950"
+                      : "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                  )}
+                  onClick={() => setShowOnlyLowProducts((current) => !current)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <TimerReset className="size-4" />
+                  {showOnlyLowProducts ? "Ver todos" : "Solo bajo stock"}
+                </Button>
               </div>
             </div>
+
+            {lowStock.length > 0 && (
+              <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 px-4 py-3">
+                <p className="font-semibold text-amber-100">
+                  {lowStock.length} producto{lowStock.length === 1 ? "" : "s"} para reponer
+                </p>
+                <p className="mt-1 text-sm text-amber-50/80">
+                  Estan en o por debajo del minimo configurado.
+                </p>
+              </div>
+            )}
 
             {isCreatingProduct && (
               <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
                 <ProductFields product={newProduct} setProduct={setNewProduct} />
-                <div className="flex justify-end">
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                    onClick={async () => {
+                      const saved = await saveProduct(newProduct);
+                      if (saved) {
+                        setNewProduct(emptyProduct);
+                        setIsCreatingProduct(false);
+                      }
+                    }}
+                    type="button"
+                    variant="outline"
+                  >
+                    Guardar
+                  </Button>
                   <Button
                     className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                     onClick={() => {
@@ -3797,7 +4711,7 @@ function StockView({
             )}
 
             <div className="grid gap-3 xl:grid-cols-2">
-              {filteredProducts.map((product) => {
+              {visibleProducts.map((product) => {
                 const isLow = product.stock <= product.minStock;
                 const isEditing = editingId === product.id;
 
@@ -3900,14 +4814,14 @@ function StockView({
                               Editar
                             </Button>
                             <Button
-                              className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
-                              onClick={() => restockProduct(product.id, 10)}
+                              className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
+                              onClick={() => deleteProduct(product)}
                               size="sm"
                               type="button"
                               variant="outline"
                             >
-                              <Plus className="size-4" />
-                              +10
+                              <Trash2 className="size-4" />
+                              Eliminar
                             </Button>
                           </div>
                         </>
@@ -3933,11 +4847,6 @@ function ProductFields({
 }) {
   return (
     <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2 xl:grid-cols-5">
-      <InlineInput
-        label="ID"
-        onChange={(value) => setProduct((current) => ({ ...current, id: value }))}
-        value={product.id}
-      />
       <InlineInput
         label="Nombre"
         onChange={(value) => setProduct((current) => ({ ...current, name: value }))}
@@ -4042,6 +4951,155 @@ function InlineInput({
         value={value}
       />
     </label>
+  );
+}
+
+function DeleteConfirmModal({
+  confirmLabel,
+  description,
+  isLoading,
+  isOpen,
+  onCancel,
+  onConfirm,
+  title,
+}: {
+  confirmLabel: string;
+  description: string;
+  isLoading: boolean;
+  isOpen: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  title: string;
+}) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
+        <div className="border-b border-white/10 p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-rose-300/20 bg-rose-300/10 text-rose-100">
+              <Trash2 className="size-5" />
+            </div>
+            <div>
+              <h3 className="font-semibold text-zinc-100">{title}</h3>
+              <p className="mt-1 text-sm leading-6 text-zinc-400">{description}</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap justify-end gap-2 p-4">
+          <Button
+            className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+            disabled={isLoading}
+            onClick={onCancel}
+            type="button"
+            variant="outline"
+          >
+            Cancelar
+          </Button>
+          <Button
+            className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
+            disabled={isLoading}
+            onClick={onConfirm}
+            type="button"
+            variant="outline"
+          >
+            {isLoading ? "Eliminando..." : confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HelpModal({
+  help,
+  isOpen,
+  onClose,
+}: {
+  help: { title: string; summary: string; sections: HelpSection[] };
+  isOpen: boolean;
+  onClose: () => void;
+}) {
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setExpandedSection(null);
+    }
+  }, [isOpen, help.title]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
+        <PanelHeader
+          icon={CircleHelp}
+          right={
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={onClose}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Cerrar
+            </Button>
+          }
+          subtitle={help.summary}
+          title={help.title}
+        />
+        <div className="grid gap-3 p-4 md:grid-cols-2">
+          {help.sections.map((section, index) => {
+            const sectionKey = `${help.title}-${section.title}`;
+            const isExpanded = expandedSection === sectionKey;
+
+            return (
+            <button
+              className={cn(
+                "rounded-lg border bg-black/20 p-4 text-left transition",
+                isExpanded
+                  ? "border-cyan-300/40 bg-cyan-300/5"
+                  : "border-white/10 hover:bg-white/[0.03]",
+              )}
+              key={sectionKey}
+              onClick={() =>
+                setExpandedSection((current) =>
+                  current === sectionKey ? null : sectionKey,
+                )
+              }
+              type="button"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-cyan-300/10 text-sm font-semibold text-cyan-100">
+                  {index + 1}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-zinc-100">{section.title}</p>
+                  <p className="mt-2 text-sm leading-6 text-zinc-400">
+                    {section.description}
+                  </p>
+                  {isExpanded && (
+                    <div className="mt-4 space-y-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                      {section.details.map((detail, detailIndex) => (
+                        <div className="flex items-start gap-3" key={`${sectionKey}-${detailIndex}`}>
+                          <span className="mt-1 size-1.5 shrink-0 rounded-full bg-cyan-300" />
+                          <p className="text-sm leading-6 text-zinc-300">{detail}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0 text-cyan-100">
+                  {isExpanded ? <Minus className="size-4" /> : <Plus className="size-4" />}
+                </div>
+              </div>
+            </button>
+          )})}
+        </div>
+      </div>
+    </div>
   );
 }
 
