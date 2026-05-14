@@ -36,10 +36,13 @@ import {
 import { LogoutButton } from "@/components/logout-button";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { UserAdminModal } from "@/components/user-admin-modal";
+import type { SessionUser, UserRole } from "@/lib/auth/user";
 import { cn } from "@/lib/utils";
 
 type ViewId =
   | "caja"
+  | "ventas"
   | "analisis"
   | "historial"
   | "finanzas"
@@ -47,6 +50,7 @@ type ViewId =
   | "stock";
 type AttendanceEvent = "entrada" | "salida";
 type ShiftName = "manana" | "tarde";
+type DiscountMode = "amount" | "percent";
 type HelpSection = {
   title: string;
   description: string;
@@ -298,12 +302,20 @@ const DEFAULT_BRANCH_ID = "00000000-0000-0000-0000-000000000001";
 
 const navItems: NavItem[] = [
   { id: "caja", label: "Caja", icon: ShoppingCart },
+  { id: "ventas", label: "Historial ventas", icon: ReceiptText },
   { id: "analisis", label: "AnÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡lisis", icon: BarChart3 },
   { id: "historial", label: "Historial", icon: CalendarClock },
   { id: "finanzas", label: "Ganancia", icon: WalletCards },
   { id: "empleados", label: "Empleados", icon: Users },
   { id: "stock", label: "Stock", icon: Package },
 ];
+
+const allowedViewsByRole: Record<UserRole, ViewId[]> = {
+  admin: ["caja", "ventas", "analisis", "historial", "finanzas", "empleados", "stock"],
+  dueno: ["caja", "ventas", "analisis", "historial", "finanzas", "empleados", "stock"],
+  empleado: ["caja", "ventas", "stock"],
+};
+
 
 const helpContentByView: Record<
   ViewId,
@@ -351,6 +363,32 @@ const helpContentByView: Record<
           "Si tocas Bajo stock, entras en una vista especial para revisar faltantes sin recorrer toda la caja.",
           "Ahi podes cambiar entre Productos y Gustos para ver que hay que reponer.",
           "Esta vista es solo informativa para trabajar mas rapido; la reposicion real se hace desde Stock.",
+        ],
+      },
+    ],
+  },
+  ventas: {
+    title: "Ayuda de historial de ventas",
+    summary: "Para revisar ventas recientes de forma simple y rapida.",
+    sections: [
+      {
+        title: "Listado",
+        description:
+          "Muestra las ventas ordenadas de la mas reciente a la mas vieja.",
+        details: [
+          "Cada tarjeta muestra lo justo para trabajar rapido: fecha, hora, cliente, metodo de pago y total.",
+          "Tambien aparece un resumen corto del pedido para identificar la venta sin abrir analisis.",
+          "Esta vista esta pensada para caja y consulta rapida del equipo.",
+        ],
+      },
+      {
+        title: "Paginas",
+        description:
+          "Las ventas se muestran de a 10 por pagina para que no quede una lista gigante.",
+        details: [
+          "Podes ir viendo las siguientes tandas sin cargar todo junto en pantalla.",
+          "La primera pagina siempre muestra las ultimas ventas guardadas.",
+          "Sirve para revisar el movimiento del dia sin perder tiempo.",
         ],
       },
     ],
@@ -798,11 +836,19 @@ export function HeladeriaErp() {
   const [category, setCategory] = useState("Todos");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [customer, setCustomer] = useState("Mostrador");
-  const [notice, setNotice] = useState("Conectando con la base de datos");
-  const [sessionEmail] = useState<string | null>(null);
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("amount");
+  const [discountValue, setDiscountValue] = useState("");
+  const [isDiscountOpen, setIsDiscountOpen] = useState(false);
+  const [, setNotice] = useState("Conectando con la base de datos");
+  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
+  const [isUsersOpen, setIsUsersOpen] = useState(false);
   const [isCharging, setIsCharging] = useState(false);
   const [, setIsSupabaseReady] = useState(false);
   const [, setIsLoadingData] = useState(true);
+  const allowedViews = sessionUser
+    ? allowedViewsByRole[sessionUser.role]
+    : allowedViewsByRole.empleado;
+  const visibleNavItems = navItems.filter((item) => allowedViews.includes(item.id));
   const activeHelp = helpContentByView[activeView];
 
   const loadData = async (successNotice = "Datos conectados con Supabase") => {
@@ -841,9 +887,30 @@ export function HeladeriaErp() {
     return true;
   };
 
+  const loadSessionUser = async () => {
+    const response = await fetch("/api/auth/me", { cache: "no-store" }).catch(
+      () => null,
+    );
+
+    if (!response?.ok) {
+      setSessionUser(null);
+      return;
+    }
+
+    const data = (await response.json()) as SessionUser;
+    setSessionUser(data);
+  };
+
   useEffect(() => {
     loadData();
+    loadSessionUser();
   }, []);
+
+  useEffect(() => {
+    if (!allowedViews.includes(activeView)) {
+      setActiveView(allowedViews[0] ?? "caja");
+    }
+  }, [activeView, allowedViews]);
 
   const cartItems = cart;
   const categories = ["Todos", ...new Set(products.map((product) => product.category))];
@@ -863,7 +930,13 @@ export function HeladeriaErp() {
     (total, item) => total + item.price * item.quantity,
     0,
   );
-  const saleDiscount = saleSubtotal >= 30000 ? saleSubtotal * 0.05 : 0;
+  const parsedDiscountValue = Math.max(0, Number(discountValue || 0));
+  const saleDiscount = Math.min(
+    saleSubtotal,
+    discountMode === "percent"
+      ? saleSubtotal * (parsedDiscountValue / 100)
+      : parsedDiscountValue,
+  );
   const saleTotal = saleSubtotal - saleDiscount;
   const grossRevenue = sales.reduce((total, sale) => total + sale.total, 0);
   const soldProductCost = saleItems.reduce(
@@ -1035,6 +1108,9 @@ export function HeladeriaErp() {
     setCart([]);
     setSelectedProduct(null);
     setSelectedFlavors([]);
+    setDiscountValue("");
+    setDiscountMode("amount");
+    setIsDiscountOpen(false);
     setNotice("Pedido cancelado");
   };
 
@@ -1167,6 +1243,9 @@ export function HeladeriaErp() {
 
       setCart([]);
       setCustomer("Mostrador");
+      setDiscountValue("");
+      setDiscountMode("amount");
+      setIsDiscountOpen(false);
       await loadData(`Pedido ${newSale.id} cobrado por ${formatCurrency(saleTotal)}`);
       setIsSupabaseReady(true);
     } catch {
@@ -1488,7 +1567,7 @@ export function HeladeriaErp() {
           </div>
 
           <nav className="flex flex-1 flex-col gap-2 p-4">
-            {navItems.map((item) => (
+            {visibleNavItems.map((item) => (
               <NavButton
                 key={item.id}
                 active={activeView === item.id}
@@ -1524,6 +1603,19 @@ export function HeladeriaErp() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                {(sessionUser?.role === "admin" ||
+                  sessionUser?.role === "dueno") && (
+                  <Button
+                    className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                    onClick={() => setIsUsersOpen(true)}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Users className="size-4" />
+                    Usuarios
+                  </Button>
+                )}
                 <Button
                   className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                   onClick={() => setIsHelpOpen(true)}
@@ -1534,14 +1626,8 @@ export function HeladeriaErp() {
                   <CircleHelp className="size-4" />
                   Ayuda
                 </Button>
-                <Badge className="max-w-80 truncate border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/10">
-                  {notice}
-                </Badge>
-                {sessionEmail ? (
+                {sessionUser ? (
                   <>
-                    <Badge className="max-w-56 truncate border-white/10 bg-white/5 text-zinc-200 hover:bg-white/5">
-                      {sessionEmail}
-                    </Badge>
                     <LogoutButton />
                   </>
                 ) : (
@@ -1558,7 +1644,7 @@ export function HeladeriaErp() {
             </div>
 
             <div className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
-              {navItems.map((item) => (
+              {visibleNavItems.map((item) => (
                 <NavButton
                   key={item.id}
                   active={activeView === item.id}
@@ -1592,17 +1678,27 @@ export function HeladeriaErp() {
                 query={query}
                 removeFromCart={removeFromCart}
                 removeSelectedFlavor={removeSelectedFlavor}
+                discountMode={discountMode}
+                discountValue={discountValue}
+                isDiscountOpen={isDiscountOpen}
                 saleDiscount={saleDiscount}
                 saleSubtotal={saleSubtotal}
                 saleTotal={saleTotal}
                 selectedFlavors={selectedFlavors}
                 selectedProduct={selectedProduct}
                 setCategory={setCategory}
+                setDiscountMode={setDiscountMode}
+                setDiscountValue={setDiscountValue}
+                setIsDiscountOpen={setIsDiscountOpen}
                 setPaymentMethod={setPaymentMethod}
                 setQuery={setQuery}
                 setSelectedProduct={setSelectedProduct}
                 toggleFlavor={toggleFlavor}
               />
+            )}
+
+            {activeView === "ventas" && (
+              <HistorialVentasView sales={sales} saleItems={saleItems} />
             )}
 
             {activeView === "analisis" && (
@@ -1683,6 +1779,10 @@ export function HeladeriaErp() {
             onConfirm={confirmDelete}
             title={deleteConfirmation?.title ?? "Confirmar eliminacion"}
           />
+          <UserAdminModal
+            isOpen={isUsersOpen}
+            onClose={() => setIsUsersOpen(false)}
+          />
         </main>
       </div>
     </div>
@@ -1741,12 +1841,15 @@ function CajaView({
   clearFromCart,
   completeSale,
   confirmFlavorSelection,
+  discountMode,
+  discountValue,
   filteredProducts,
   flavors,
   addQuantityToLine,
   cancelCart,
   handleProductClick,
   isCharging,
+  isDiscountOpen,
   lowFlavorStock,
   lowStock,
   paymentMethod,
@@ -1760,6 +1863,9 @@ function CajaView({
   selectedFlavors,
   selectedProduct,
   setCategory,
+  setDiscountMode,
+  setDiscountValue,
+  setIsDiscountOpen,
   setPaymentMethod,
   setQuery,
   setSelectedProduct,
@@ -1771,12 +1877,15 @@ function CajaView({
   clearFromCart: (id: string) => void;
   completeSale: () => void;
   confirmFlavorSelection: () => void;
+  discountMode: DiscountMode;
+  discountValue: string;
   filteredProducts: Product[];
   flavors: IceCreamFlavor[];
   addQuantityToLine: (lineId: string) => void;
   cancelCart: () => void;
   handleProductClick: (product: Product) => void;
   isCharging: boolean;
+  isDiscountOpen: boolean;
   lowFlavorStock: IceCreamFlavor[];
   lowStock: Product[];
   paymentMethod: string;
@@ -1790,6 +1899,9 @@ function CajaView({
   selectedFlavors: string[];
   selectedProduct: Product | null;
   setCategory: (category: string) => void;
+  setDiscountMode: (mode: DiscountMode) => void;
+  setDiscountValue: (value: string) => void;
+  setIsDiscountOpen: (open: boolean) => void;
   setPaymentMethod: (method: string) => void;
   setQuery: (query: string) => void;
   setSelectedProduct: (product: Product | null) => void;
@@ -2494,6 +2606,88 @@ function CajaView({
                 </button>
               ))}
             </div>
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-semibold text-zinc-100">Descuento</p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Aplicalo al pedido antes de cobrar
+                  </p>
+                </div>
+                <Button
+                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  onClick={() => setIsDiscountOpen(!isDiscountOpen)}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  {saleDiscount > 0 ? "Editar descuento" : "Agregar descuento"}
+                </Button>
+              </div>
+
+              {isDiscountOpen && (
+                <div className="mt-3 space-y-3 border-t border-white/10 pt-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      className={cn(
+                        discountMode === "amount"
+                          ? "border-cyan-300 bg-cyan-300 text-zinc-950"
+                          : "border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10",
+                      )}
+                      onClick={() => setDiscountMode("amount")}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      $
+                    </Button>
+                    <Button
+                      className={cn(
+                        discountMode === "percent"
+                          ? "border-cyan-300 bg-cyan-300 text-zinc-950"
+                          : "border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10",
+                      )}
+                      onClick={() => setDiscountMode("percent")}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      %
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                    <div>
+                      <label className="text-xs font-semibold text-zinc-500">
+                        {discountMode === "percent"
+                          ? "Porcentaje de descuento"
+                          : "Monto de descuento"}
+                        <input
+                          className="mt-1 h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
+                          min={0}
+                          onChange={(event) => setDiscountValue(event.target.value)}
+                          placeholder={discountMode === "percent" ? "10" : "1500"}
+                          type="number"
+                          value={discountValue}
+                        />
+                      </label>
+                    </div>
+                    <Button
+                      className="self-end border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                      onClick={() => {
+                        setDiscountValue("");
+                        setDiscountMode("amount");
+                        setIsDiscountOpen(false);
+                      }}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      Quitar
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
             <TotalRow label="Subtotal" value={formatCurrency(saleSubtotal)} />
             <TotalRow label="Descuento" value={`-${formatCurrency(saleDiscount)}`} />
             <TotalRow strong label="Total a cobrar" value={formatCurrency(saleTotal)} />
@@ -2521,6 +2715,238 @@ function CajaView({
         </DarkPanel>
       </div>
     </div>
+  );
+}
+
+function HistorialVentasView({
+  sales,
+  saleItems,
+}: {
+  sales: Sale[];
+  saleItems: SaleItem[];
+}) {
+  const pageSize = 10;
+  const [page, setPage] = useState(0);
+  const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+  const salesByNewest = useMemo(
+    () =>
+      [...sales].sort(
+        (left, right) =>
+          new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+      ),
+    [sales],
+  );
+  const saleItemsBySaleId = useMemo(() => {
+    return saleItems.reduce<Record<string, SaleItem[]>>((acc, item) => {
+      if (!acc[item.saleId]) {
+        acc[item.saleId] = [];
+      }
+      acc[item.saleId].push(item);
+      return acc;
+    }, {});
+  }, [saleItems]);
+  const totalPages = Math.max(1, Math.ceil(salesByNewest.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const paginatedSales = salesByNewest.slice(
+    safePage * pageSize,
+    safePage * pageSize + pageSize,
+  );
+
+  useEffect(() => {
+    if (page > totalPages - 1) {
+      setPage(Math.max(0, totalPages - 1));
+    }
+  }, [page, totalPages]);
+
+  useEffect(() => {
+    setExpandedSaleId(null);
+  }, [safePage]);
+
+  return (
+    <DarkPanel>
+      <PanelHeader
+        icon={ReceiptText}
+        title="Historial de ventas"
+        subtitle={`${salesByNewest.length} venta${salesByNewest.length === 1 ? "" : "s"} registradas`}
+        right={
+          <div className="flex items-center gap-2">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={safePage === 0}
+              onClick={() => setPage((current) => Math.max(0, current - 1))}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Mas recientes
+            </Button>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={safePage >= totalPages - 1}
+              onClick={() =>
+                setPage((current) => Math.min(totalPages - 1, current + 1))
+              }
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Siguientes 10
+            </Button>
+          </div>
+        }
+      />
+      <div className="space-y-3 p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
+          Pagina {safePage + 1} de {totalPages}
+        </div>
+
+        {paginatedSales.length ? (
+          <div className="space-y-3">
+            {paginatedSales.map((sale) => {
+              const items = saleItemsBySaleId[sale.id] ?? [];
+              const firstItem = items[0];
+              const extraItems = Math.max(items.length - 1, 0);
+              const isExpanded = expandedSaleId === sale.id;
+
+              return (
+                <div
+                  className={cn(
+                    "rounded-lg border bg-black/20 p-4 transition",
+                    isExpanded
+                      ? "border-cyan-300/30 bg-cyan-300/[0.04]"
+                      : "border-white/10",
+                  )}
+                  key={sale.id}
+                >
+                  <button
+                    className="w-full text-left"
+                    onClick={() =>
+                      setExpandedSaleId((current) =>
+                        current === sale.id ? null : sale.id,
+                      )
+                    }
+                    type="button"
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-zinc-100">
+                          {firstItem
+                            ? `${firstItem.quantity}x ${firstItem.product}`
+                            : `${sale.items} producto${sale.items === 1 ? "" : "s"}`}
+                        </p>
+                        {extraItems > 0 && (
+                          <p className="mt-1 text-xs text-zinc-500">
+                            + {extraItems} producto{extraItems === 1 ? "" : "s"} mas
+                          </p>
+                        )}
+                        <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
+                          <span>{formatFullDateTime(sale.createdAt)}</span>
+                          <span>•</span>
+                          <span>{sale.customer}</span>
+                          <span>•</span>
+                          <span>{sale.method}</span>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-lg font-semibold text-emerald-200">
+                          {formatCurrency(sale.total)}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {sale.items} producto{sale.items === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Cliente</p>
+                          <p className="mt-2 font-semibold text-zinc-100">
+                            {sale.customer}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Metodo</p>
+                          <p className="mt-2 font-semibold text-zinc-100">
+                            {sale.method}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Hora</p>
+                          <p className="mt-2 font-semibold text-zinc-100">
+                            {sale.time}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Total</p>
+                          <p className="mt-2 font-semibold text-emerald-200">
+                            {formatCurrency(sale.total)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-white/10 bg-white/[0.03]">
+                        <div className="border-b border-white/10 px-4 py-3">
+                          <p className="font-semibold text-zinc-100">
+                            Productos de la venta
+                          </p>
+                        </div>
+                        <div className="divide-y divide-white/10">
+                          {items.map((item) => (
+                            <div
+                              className="flex items-start justify-between gap-4 px-4 py-3"
+                              key={item.id}
+                            >
+                              <div>
+                                <p className="font-semibold text-zinc-100">
+                                  {item.quantity}x {item.product}
+                                </p>
+                                {!!item.flavors.length && (
+                                  <p className="mt-1 text-xs text-zinc-500">
+                                    Gustos: {item.flavors.join(", ")}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Subtotal</p>
+                          <p className="mt-2 font-semibold text-zinc-100">
+                            {formatCurrency(sale.subtotal)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Descuento</p>
+                          <p className="mt-2 font-semibold text-amber-200">
+                            {formatCurrency(sale.discount)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Total final</p>
+                          <p className="mt-2 font-semibold text-emerald-200">
+                            {formatCurrency(sale.total)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-white/10 bg-black/20 p-5 text-center text-sm text-zinc-500">
+            Todavia no hay ventas guardadas.
+          </div>
+        )}
+      </div>
+    </DarkPanel>
   );
 }
 
