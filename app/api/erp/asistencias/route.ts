@@ -25,3 +25,40 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function PATCH(request: Request) {
+  try {
+    const body = (await request.json()) as Record<string, unknown>;
+    const supabase = createAdminClient();
+
+    if (typeof body.id !== "string" || !body.id.trim()) {
+      return NextResponse.json({ error: "Falta el id del fichaje" }, { status: 400 });
+    }
+
+    const payload = {
+      empleado_id: body.empleado_id ?? null,
+      empleado: body.empleado,
+      tipo: body.tipo,
+      turno: body.turno,
+      creado: body.creado,
+    };
+
+    const { data, error } = await supabase
+      .from("asistencias")
+      .update(payload)
+      .eq("id", body.id)
+      .select("id,empleado_id,empleado,tipo,turno,creado")
+      .single();
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ asistencia: data });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Error desconocido" },
+      { status: 500 },
+    );
+  }
+}
