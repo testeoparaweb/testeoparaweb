@@ -1,22 +1,29 @@
 import { NextResponse } from "next/server";
 
+import { requireRoles } from "@/lib/auth/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET() {
   try {
+    const permission = await requireRoles(["admin", "dueno", "empleado"]);
+    if (!permission.ok) return permission.response;
+
     const supabase = createAdminClient();
 
     const [
       productos,
       gustosConStock,
       metodosPago,
-      ventas,
+      ventasConCanal,
       itemsVenta,
       gastos,
       gastosHistorial,
       tandasGustos,
       empleados,
       asistencias,
+      diseno,
+      comisionesCanales,
+      auditoria,
     ] = await Promise.all([
       supabase
         .from("productos")
@@ -32,17 +39,17 @@ export async function GET() {
         .order("nombre", { ascending: true }),
       supabase
         .from("metodos_pago")
-        .select("nombre")
+        .select("nombre,comision")
         .eq("activo", true)
         .order("nombre", { ascending: true }),
       supabase
         .from("ventas")
-        .select("id,cliente,productos,metodo,hora,total,subtotal,descuento,creado")
+        .select("id,cliente,canal,productos,metodo,hora,total,subtotal,descuento,creado")
         .order("creado", { ascending: false })
         .range(0, 9999),
       supabase
         .from("items_venta")
-        .select("id,venta_id,producto,cantidad,costo,gustos,creado")
+        .select("id,venta_id,producto,cantidad,precio,costo,total,gustos,creado")
         .order("creado", { ascending: false })
         .range(0, 9999),
       supabase
@@ -62,12 +69,27 @@ export async function GET() {
         .limit(1000),
       supabase
         .from("empleados")
-        .select("id,nombre,rol,turno,sector,estado")
+        .select("id,nombre,rol,turno,sector,estado,pin_codigo")
         .eq("activo", true)
         .order("nombre", { ascending: true }),
       supabase
         .from("asistencias")
         .select("id,empleado_id,empleado,tipo,turno,creado")
+        .order("creado", { ascending: false })
+        .limit(50),
+      supabase
+        .from("configuracion")
+        .select("valor")
+        .eq("clave", "diseno")
+        .maybeSingle(),
+      supabase
+        .from("configuracion")
+        .select("valor")
+        .eq("clave", "comisiones_canales")
+        .maybeSingle(),
+      supabase
+        .from("auditoria")
+        .select("id,entidad,entidad_id,accion,detalle,usuario_nombre,creado")
         .order("creado", { ascending: false })
         .limit(50),
     ]);
@@ -91,6 +113,16 @@ export async function GET() {
             .order("nombre", { ascending: true })
         : gustos;
 
+    const ventas =
+      ventasConCanal.error?.code === "42703" ||
+      ventasConCanal.error?.code === "PGRST204"
+        ? await supabase
+            .from("ventas")
+            .select("id,cliente,productos,metodo,hora,total,subtotal,descuento,creado")
+            .order("creado", { ascending: false })
+            .range(0, 9999)
+        : ventasConCanal;
+
     const historialError =
       gastosHistorial.error?.code === "42P01" ||
       gastosHistorial.error?.code === "PGRST205"
@@ -103,6 +135,20 @@ export async function GET() {
         ? null
         : tandasGustos.error;
 
+    const disenoError =
+      diseno.error?.code === "42P01" || diseno.error?.code === "PGRST205"
+        ? null
+        : diseno.error;
+    const comisionesError =
+      comisionesCanales.error?.code === "42P01" ||
+      comisionesCanales.error?.code === "PGRST205"
+        ? null
+        : comisionesCanales.error;
+    const auditoriaError =
+      auditoria.error?.code === "42P01" || auditoria.error?.code === "PGRST205"
+        ? null
+        : auditoria.error;
+
     const error =
       productos.error ||
       gustosCompat.error ||
@@ -112,6 +158,9 @@ export async function GET() {
       gastos.error ||
       historialError ||
       tandasError ||
+      disenoError ||
+      comisionesError ||
+      auditoriaError ||
       empleados.error ||
       asistencias.error;
 
@@ -130,6 +179,11 @@ export async function GET() {
       tandas_gustos: tandasGustos.error ? [] : tandasGustos.data ?? [],
       empleados: empleados.data ?? [],
       asistencias: asistencias.data ?? [],
+      diseno: diseno.error ? null : diseno.data?.valor ?? null,
+      comisiones_canales: comisionesCanales.error
+        ? null
+        : comisionesCanales.data?.valor ?? null,
+      auditoria: auditoria.error ? [] : auditoria.data ?? [],
     });
   } catch (error) {
     return NextResponse.json(

@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { requireRoles } from "@/lib/auth/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as { gastos: Array<Record<string, unknown>> };
     const supabase = createAdminClient();
     const total = body.gastos.reduce(
@@ -32,6 +36,14 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json({ error: snapshot.error.message }, { status: 500 });
     }
+
+    await supabase.from("auditoria").insert({
+      accion: "actualizar",
+      entidad: "gastos",
+      detalle: { total, gastos: body.gastos },
+      usuario_id: permission.user.id,
+      usuario_nombre: permission.user.name,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

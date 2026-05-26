@@ -85,7 +85,7 @@ export function ForgotPasswordForm({
                     className="border-white/10 bg-[#080a0c] text-zinc-100 placeholder:text-zinc-500"
                     id="email"
                     type="email"
-                    placeholder="matias@facundos.com"
+                    placeholder="usuario@local.com"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -101,7 +101,7 @@ export function ForgotPasswordForm({
                 </Button>
               </div>
               <div className="mt-4 text-center text-sm text-zinc-500">
-                Already have an account?{" "}
+                ¿Ya tenés una cuenta?{" "}
                 <Link
                   href="/auth/login"
                   className="text-cyan-200 underline-offset-4 hover:underline"

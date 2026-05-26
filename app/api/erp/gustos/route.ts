@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { requireRoles } from "@/lib/auth/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as {
       id: string;
       nombre: string;
@@ -19,7 +23,7 @@ export async function POST(request: Request) {
     const payload = {
       id: body.id,
       nombre: body.nombre,
-      categoria: body.categoria?.trim() || "Sin categoria",
+      categoria: body.categoria?.trim() || "Sin categoría",
       disponible: body.disponible,
       color: body.color,
       stock: body.stock,
@@ -61,6 +65,9 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as { id?: string };
     const id = body.id?.trim();
 

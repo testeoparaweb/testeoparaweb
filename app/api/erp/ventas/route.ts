@@ -1,75 +1,56 @@
 import { NextResponse } from "next/server";
 
+import { requireRoles } from "@/lib/auth/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type VentaPayload = {
   venta: Record<string, unknown>;
   items: Array<Record<string, unknown>>;
   movimientos: Array<Record<string, unknown>>;
-  stock: Array<{ id: string; stock: number }>;
-  stock_gustos?: Array<{ id: string; stock: number }>;
+  stock: Array<{ cantidad?: number; id: string; stock: number }>;
+  stock_gustos?: Array<{ cantidad?: number; id: string; stock: number }>;
 };
 
 export async function POST(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno", "empleado"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as VentaPayload;
-    const supabase = createAdminClient();
+    const pedido: VentaPayload = {
+      ...body,
+      venta: {
+        ...body.venta,
+        usuario_id: permission.user.id,
+      },
+      movimientos: Array.isArray(body.movimientos)
+        ? body.movimientos.map((movimiento) => ({
+            ...movimiento,
+            usuario_id: permission.user.id,
+          }))
+        : [],
+      stock: Array.isArray(body.stock) ? body.stock : [],
+      stock_gustos: Array.isArray(body.stock_gustos) ? body.stock_gustos : [],
+    };
+    const saleId = String(pedido.venta?.id ?? "").trim();
 
-    const venta = await supabase.from("ventas").insert(body.venta);
-    if (venta.error) {
-      return NextResponse.json({ error: venta.error.message }, { status: 500 });
-    }
-
-    const items = await supabase.from("items_venta").insert(body.items);
-    if (items.error) {
-      return NextResponse.json({ error: items.error.message }, { status: 500 });
-    }
-
-    const movimientos = await supabase
-      .from("movimientos_stock")
-      .insert(body.movimientos);
-    if (movimientos.error) {
+    if (!saleId || !Array.isArray(pedido.items) || pedido.items.length === 0) {
       return NextResponse.json(
-        { error: movimientos.error.message },
-        { status: 500 },
+        { error: "El pedido no tiene datos suficientes para guardarse" },
+        { status: 400 },
       );
     }
 
-    const updates = await Promise.all(
-      body.stock.map((item) =>
-        supabase.from("productos").update({ stock: item.stock }).eq("id", item.id),
-      ),
-    );
-    const stockError = updates.find((item) => item.error)?.error;
-    if (stockError) {
-      return NextResponse.json({ error: stockError.message }, { status: 500 });
-    }
-
-    if (body.stock_gustos?.length) {
-      const flavorUpdates = await Promise.all(
-        body.stock_gustos.map((item) =>
-          supabase.from("gustos").update({ stock: item.stock }).eq("id", item.id),
-        ),
-      );
-      const flavorError = flavorUpdates.find((item) => item.error)?.error;
-      if (flavorError) {
-        return NextResponse.json({ error: flavorError.message }, { status: 500 });
-      }
-    }
-
-    const caja = await supabase.from("caja").insert({
-      sucursal_id: body.venta.sucursal_id ?? null,
-      tipo: "ingreso",
-      concepto: `Venta ${body.venta.id}`,
-      monto: body.venta.total ?? 0,
-      metodo: body.venta.metodo ?? null,
-      venta_id: body.venta.id,
+    const supabase = createAdminClient();
+    const { data, error } = await supabase.rpc("guardar_venta_transaccional", {
+      pedido,
     });
-    if (caja.error) {
-      return NextResponse.json({ error: caja.error.message }, { status: 500 });
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, venta: body.venta });
+    return NextResponse.json({ ok: true, resultado: data, venta: pedido.venta });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Error desconocido" },

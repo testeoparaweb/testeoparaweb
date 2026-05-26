@@ -9,8 +9,8 @@ const defaultUrl = process.env.VERCEL_URL
 
 export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
-  title: "Heladeria Facundo's ERP",
-  description: "ERP operativo para heladeria y cafeteria",
+  title: "Sistema de gestión",
+  description: "Sistema operativo para locales y comercios",
 };
 
 const geistSans = Geist({

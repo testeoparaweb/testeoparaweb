@@ -326,17 +326,17 @@ insert into public.productos (
   max_gustos
 )
 values
-  ('hel-025', '1/4 kg helado artesanal', 'Helado', 4200, 1780, 28, 12, 'potes', 'https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&w=700&q=80', 2),
-  ('hel-050', '1/2 kg helado artesanal', 'Helado', 7600, 3220, 18, 8, 'potes', 'https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&w=700&q=80', 3),
-  ('hel-100', '1 kg helado artesanal', 'Helado', 13900, 5980, 11, 6, 'potes', 'https://images.unsplash.com/photo-1563805042-7684c019e1cb?auto=format&fit=crop&w=700&q=80', 4),
-  ('cuc-simple', 'Cucurucho simple', 'Helado', 2400, 880, 46, 20, 'unid.', 'https://images.unsplash.com/photo-1570197788417-0e82375c9371?auto=format&fit=crop&w=700&q=80', 1),
-  ('cuc-doble', 'Cucurucho doble', 'Helado', 3400, 1260, 40, 18, 'unid.', 'https://images.unsplash.com/photo-1570197788417-0e82375c9371?auto=format&fit=crop&w=700&q=80', 2),
-  ('affogato', 'Affogato', 'Cafe', 3600, 1390, 22, 10, 'serv.', 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=700&q=80', 1),
-  ('latte', 'Cafe latte', 'Cafe', 2500, 820, 70, 25, 'serv.', 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=700&q=80', 0),
-  ('capuccino', 'Cappuccino', 'Cafe', 2700, 880, 62, 25, 'serv.', 'https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=700&q=80', 0),
-  ('medialuna', 'Medialuna manteca', 'Pasteleria', 1200, 430, 34, 16, 'unid.', 'https://images.unsplash.com/photo-1486427944299-d1955d23e34d?auto=format&fit=crop&w=700&q=80', 0),
-  ('tostado', 'Tostado jamon y queso', 'Pasteleria', 5200, 2100, 12, 8, 'unid.', 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=700&q=80', 0),
-  ('limonada', 'Limonada', 'Bebida', 2600, 760, 24, 10, 'vasos', 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?auto=format&fit=crop&w=700&q=80', 0)
+  ('hel-025', '1/4 kg helado artesanal', 'Helado', 4200, 1780, 28, 12, 'potes', null, 2),
+  ('hel-050', '1/2 kg helado artesanal', 'Helado', 7600, 3220, 18, 8, 'potes', null, 3),
+  ('hel-100', '1 kg helado artesanal', 'Helado', 13900, 5980, 11, 6, 'potes', null, 4),
+  ('cuc-simple', 'Cucurucho simple', 'Helado', 2400, 880, 46, 20, 'unid.', null, 1),
+  ('cuc-doble', 'Cucurucho doble', 'Helado', 3400, 1260, 40, 18, 'unid.', null, 2),
+  ('affogato', 'Affogato', 'Cafe', 3600, 1390, 22, 10, 'serv.', null, 1),
+  ('latte', 'Cafe latte', 'Cafe', 2500, 820, 70, 25, 'serv.', null, 0),
+  ('capuccino', 'Cappuccino', 'Cafe', 2700, 880, 62, 25, 'serv.', null, 0),
+  ('medialuna', 'Medialuna manteca', 'Pasteleria', 1200, 430, 34, 16, 'unid.', null, 0),
+  ('tostado', 'Tostado jamon y queso', 'Pasteleria', 5200, 2100, 12, 8, 'unid.', null, 0),
+  ('limonada', 'Limonada', 'Bebida', 2600, 760, 24, 10, 'vasos', null, 0)
 on conflict (id) do update set
   nombre = excluded.nombre,
   categoria = excluded.categoria,

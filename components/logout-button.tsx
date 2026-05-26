@@ -15,7 +15,7 @@ export function LogoutButton() {
 
   return (
     <Button onClick={logout} size="sm" variant="outline">
-      Cerrar sesion
+      Cerrar sesión
     </Button>
   );
 }

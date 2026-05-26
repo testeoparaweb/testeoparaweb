@@ -25,7 +25,7 @@ if (!url || !serviceRoleKey) {
 }
 
 const email = "matiasbarbeito23@gmail.com";
-const password = "FacundosAdmin!2026";
+const password = "AdminLocal!2026";
 const username = "matiasbarbeito23";
 const name = "Matias Barbeito";
 const role = "admin";

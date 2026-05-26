@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Amatic+SC:wght@400;700&family=Anton&family=Architects+Daughter&family=Bebas+Neue&family=Caveat:wght@400;600;700&family=Cinzel:wght@400;600;700&family=Cormorant+Garamond:wght@400;600;700&family=Courgette&family=DM+Sans:wght@400;500;600;700&family=Dancing+Script:wght@400;600;700&family=Fira+Sans:wght@400;500;600;700&family=Fredericka+the+Great&family=Great+Vibes&family=Indie+Flower&family=Inter:wght@400;500;600;700;800&family=Kalam:wght@400;700&family=Lato:wght@400;700;900&family=Lexend:wght@400;500;600;700&family=Lobster&family=Lora:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Merriweather:wght@400;700;900&family=Montserrat:wght@400;500;600;700;800&family=Mulish:wght@400;500;600;700;800&family=Nunito:wght@400;500;600;700;800&family=Open+Sans:wght@400;500;600;700;800&family=Oswald:wght@400;500;600;700&family=Pacifico&family=Patrick+Hand&family=Permanent+Marker&family=Playfair+Display:wght@400;600;700;800&family=Poppins:wght@400;500;600;700;800&family=Quicksand:wght@400;500;600;700&family=Raleway:wght@400;500;600;700;800&family=Roboto+Slab:wght@400;600;700&family=Roboto:wght@400;500;700;900&family=Rubik:wght@400;500;600;700&family=Rye&family=Satisfy&family=Source+Sans+3:wght@400;500;600;700;800&family=Special+Elite&family=Work+Sans:wght@400;500;600;700;800&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -64,5 +66,223 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+.script-brand-font {
+  font-family: "Great Vibes", "Dancing Script", cursive;
+  letter-spacing: 0;
+}
+
+@layer utilities {
+  .erp-theme .text-cyan-100,
+  .erp-theme .text-cyan-200,
+  .erp-theme .text-cyan-300 {
+    color: var(--erp-primary);
+  }
+
+  .erp-theme .bg-cyan-300 {
+    background-color: var(--erp-primary);
+  }
+
+  .erp-theme .bg-cyan-200,
+  .erp-theme .hover\:bg-cyan-200:hover {
+    background-color: color-mix(in srgb, var(--erp-primary) 84%, var(--erp-text));
+  }
+
+  .erp-theme .bg-cyan-300\/5 {
+    background-color: var(--erp-primary-softer);
+  }
+
+  .erp-theme .bg-cyan-300\/\[0\.04\] {
+    background-color: var(--erp-primary-softer);
+  }
+
+  .erp-theme .bg-cyan-300\/10 {
+    background-color: var(--erp-primary-soft);
+  }
+
+  .erp-theme .bg-cyan-300\/20,
+  .erp-theme .hover\:bg-cyan-300\/20:hover {
+    background-color: var(--erp-primary-hover);
+  }
+
+  .erp-theme .border-cyan-300,
+  .erp-theme .border-cyan-300\/20,
+  .erp-theme .border-cyan-300\/30,
+  .erp-theme .border-cyan-300\/40,
+  .erp-theme .border-cyan-300\/50,
+  .erp-theme .border-cyan-300\/60,
+  .erp-theme .hover\:border-cyan-300\/40:hover,
+  .erp-theme .hover\:border-cyan-300\/50:hover,
+  .erp-theme .focus\:border-cyan-300\/60:focus {
+    border-color: var(--erp-primary-border);
+  }
+
+  .erp-theme .text-emerald-100,
+  .erp-theme .text-emerald-200,
+  .erp-theme .text-green-100,
+  .erp-theme .text-green-200 {
+    color: var(--erp-success);
+  }
+
+  .erp-theme .bg-emerald-300,
+  .erp-theme .bg-green-300 {
+    background-color: var(--erp-success);
+  }
+
+  .erp-theme .bg-emerald-300\/10,
+  .erp-theme .bg-green-300\/10 {
+    background-color: var(--erp-success-soft);
+  }
+
+  .erp-theme .bg-emerald-300\/20,
+  .erp-theme .hover\:bg-emerald-300\/20:hover,
+  .erp-theme .hover\:bg-green-300\/20:hover {
+    background-color: var(--erp-success-hover);
+  }
+
+  .erp-theme .border-emerald-300\/20,
+  .erp-theme .border-emerald-300\/30,
+  .erp-theme .border-green-300\/20,
+  .erp-theme .border-green-300\/30 {
+    border-color: var(--erp-success-border);
+  }
+
+  .erp-theme .text-amber-50,
+  .erp-theme .text-amber-50\/80,
+  .erp-theme .text-amber-50\/90,
+  .erp-theme .text-amber-100,
+  .erp-theme .text-amber-100\/80,
+  .erp-theme .text-amber-200 {
+    color: var(--erp-warning);
+  }
+
+  .erp-theme .bg-amber-300 {
+    background-color: var(--erp-warning);
+  }
+
+  .erp-theme .bg-amber-300\/10 {
+    background-color: var(--erp-warning-soft);
+  }
+
+  .erp-theme .bg-amber-300\/15,
+  .erp-theme .bg-amber-300\/20,
+  .erp-theme .hover\:bg-amber-300\/15:hover,
+  .erp-theme .hover\:bg-amber-300\/20:hover {
+    background-color: var(--erp-warning-hover);
+  }
+
+  .erp-theme .border-amber-300,
+  .erp-theme .border-amber-300\/20,
+  .erp-theme .border-amber-300\/30,
+  .erp-theme .border-amber-300\/40,
+  .erp-theme .border-amber-300\/60,
+  .erp-theme .hover\:border-amber-300\/30:hover,
+  .erp-theme .hover\:border-amber-300\/60:hover {
+    border-color: var(--erp-warning-border);
+  }
+
+  .erp-theme .text-rose-100,
+  .erp-theme .text-rose-200,
+  .erp-theme .text-red-100,
+  .erp-theme .text-red-200 {
+    color: var(--erp-danger);
+  }
+
+  .erp-theme .bg-rose-300,
+  .erp-theme .bg-red-300 {
+    background-color: var(--erp-danger);
+  }
+
+  .erp-theme .bg-rose-300\/10,
+  .erp-theme .bg-red-300\/10 {
+    background-color: var(--erp-danger-soft);
+  }
+
+  .erp-theme .bg-rose-300\/20,
+  .erp-theme .hover\:bg-rose-300\/20:hover,
+  .erp-theme .hover\:bg-red-300\/20:hover {
+    background-color: var(--erp-danger-hover);
+  }
+
+  .erp-theme .border-rose-300\/20,
+  .erp-theme .border-rose-300\/30,
+  .erp-theme .border-rose-500\/80,
+  .erp-theme .border-red-300\/20,
+  .erp-theme .border-red-300\/30 {
+    border-color: var(--erp-danger-border);
+  }
+
+  .erp-theme .text-zinc-100,
+  .erp-theme .text-zinc-200,
+  .erp-theme .text-zinc-300 {
+    color: var(--erp-text);
+  }
+
+  .erp-theme .text-zinc-400,
+  .erp-theme .text-zinc-500,
+  .erp-theme .text-zinc-600,
+  .erp-theme .placeholder\:text-zinc-500::placeholder {
+    color: var(--erp-muted);
+  }
+
+  .erp-theme .text-zinc-950 {
+    color: var(--erp-primary-text);
+  }
+
+  .erp-theme .border-white\/5,
+  .erp-theme .border-white\/10,
+  .erp-theme .border-white\/20,
+  .erp-theme .hover\:border-white\/20:hover {
+    border-color: var(--erp-border);
+  }
+
+  .erp-theme .bg-white\/5,
+  .erp-theme .bg-black\/20,
+  .erp-theme .bg-black\/25,
+  .erp-theme .bg-black\/30 {
+    background-color: var(--erp-panel-softer);
+  }
+
+  .erp-theme .bg-white\/10,
+  .erp-theme .hover\:bg-white\/10:hover {
+    background-color: var(--erp-panel-hover);
+  }
+
+  .erp-theme .hover\:bg-white\/5:hover,
+  .erp-theme .hover\:bg-white\/\[0\.03\]:hover {
+    background-color: var(--erp-panel-soft);
+  }
+
+  .erp-theme .bg-zinc-900\/70 {
+    background-color: color-mix(in srgb, var(--erp-panel-alt) 70%, var(--erp-bg));
+  }
+
+  .erp-theme .bg-\[\#070809\] {
+    background-color: var(--erp-bg);
+  }
+
+  .erp-theme .bg-\[\#0d0f10\],
+  .erp-theme .bg-\[\#0f1213\],
+  .erp-theme .bg-\[\#101315\],
+  .erp-theme .bg-\[\#121516\] {
+    background-color: var(--erp-panel);
+  }
+
+  .erp-theme .bg-\[\#080a0c\] {
+    background-color: color-mix(in srgb, var(--erp-panel-alt) 72%, var(--erp-bg));
+  }
+
+  .erp-theme .bg-\[\#191512\] {
+    background-color: color-mix(in srgb, var(--erp-warning) 10%, var(--erp-panel));
+  }
+
+  .erp-theme .hover\:bg-\[\#161b1c\]:hover {
+    background-color: var(--erp-panel-hover);
+  }
+
+  .erp-theme .border-t-cyan-300 {
+    border-top-color: var(--erp-primary);
   }
 }

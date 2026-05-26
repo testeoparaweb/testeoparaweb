@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { requireRoles } from "@/lib/auth/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type ProductoPayload = {
@@ -19,6 +20,9 @@ type ProductoPayload = {
 
 export async function POST(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as ProductoPayload;
     const supabase = createAdminClient();
 
@@ -50,6 +54,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: producto.error.message }, { status: 500 });
     }
 
+    await supabase.from("auditoria").insert({
+      accion: "guardar",
+      entidad: "producto",
+      entidad_id: body.id,
+      detalle: {
+        nombre: body.nombre,
+        categoria: body.categoria,
+        precio: body.precio,
+        costo: body.costo,
+        stock: body.stock,
+      },
+      usuario_id: permission.user.id,
+      usuario_nombre: permission.user.name,
+    });
+
     if (
       typeof body.stock_anterior === "number" &&
       body.stock_anterior !== body.stock
@@ -58,7 +77,8 @@ export async function POST(request: Request) {
         producto_id: body.id,
         tipo: "ajuste",
         cantidad: body.stock - body.stock_anterior,
-        nota: "Ajuste manual desde modulo stock",
+        usuario_id: permission.user.id,
+        nota: "Ajuste manual desde módulo stock",
       });
 
       if (movimiento.error) {
@@ -80,6 +100,9 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as { id?: string };
     const id = body.id?.trim();
 
@@ -99,6 +122,15 @@ export async function DELETE(request: Request) {
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    await supabase.from("auditoria").insert({
+      accion: "eliminar",
+      entidad: "producto",
+      entidad_id: id,
+      detalle: { id },
+      usuario_id: permission.user.id,
+      usuario_nombre: permission.user.name,
+    });
 
     return NextResponse.json({ ok: true });
   } catch (error) {

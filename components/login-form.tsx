@@ -97,7 +97,7 @@ export function LoginForm({
     <div className={cn("flex flex-col gap-6", className)} {...props}>
       <Card className="border-white/10 bg-[#101315] text-zinc-100 shadow-2xl">
         <CardHeader className="border-b border-white/10 pb-5">
-          <CardTitle className="text-2xl text-zinc-100">Iniciar sesion</CardTitle>
+          <CardTitle className="text-2xl text-zinc-100">Iniciar sesión</CardTitle>
         </CardHeader>
         <CardContent className="pt-6">
           <form onSubmit={handleLogin}>
@@ -110,7 +110,7 @@ export function LoginForm({
                   className="border-white/10 bg-[#080a0c] text-zinc-100 placeholder:text-zinc-500"
                   id="username"
                   type="text"
-                  placeholder="facundo.admin"
+                  placeholder="usuario.admin"
                   required
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}

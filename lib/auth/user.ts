@@ -57,7 +57,7 @@ export function getUserRole(user: Pick<User, "email" | "user_metadata">): UserRo
     return role;
   }
 
-  return "dueno";
+  return "empleado";
 }
 
 export async function getSessionUser(): Promise<SessionUser | null> {

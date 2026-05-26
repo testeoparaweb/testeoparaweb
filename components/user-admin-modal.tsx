@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ShieldPlus, Users } from "lucide-react";
+import { Pencil, ShieldPlus, Trash2, Users } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,16 +50,29 @@ export function UserAdminModal({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<ManagedUser["role"]>("empleado");
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeletingUserId, setIsDeletingUserId] = useState<string | null>(null);
 
   const resetForm = () => {
+    setEditingUser(null);
     setName("");
     setUsername("");
     setEmail("");
     setPassword("");
     setRole("empleado");
+  };
+
+  const startEditing = (user: ManagedUser) => {
+    setEditingUser(user);
+    setName(user.name);
+    setUsername(user.username);
+    setEmail(user.email);
+    setPassword("");
+    setRole(user.role);
+    setNotice(null);
   };
 
   const loadUsers = async () => {
@@ -84,6 +97,41 @@ export function UserAdminModal({
     setIsLoadingUsers(false);
   };
 
+  const deleteUser = async (user: ManagedUser) => {
+    const confirmed = window.confirm(
+      `Eliminar el usuario ${user.name}? Esta accion no se puede deshacer.`,
+    );
+
+    if (!confirmed) return;
+
+    setIsDeletingUserId(user.id);
+    setNotice(null);
+
+    const response = await fetch("/api/auth/usuarios", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: user.id }),
+    });
+
+    const data = (await response.json().catch(() => null)) as
+      | { error?: string }
+      | null;
+
+    if (!response.ok) {
+      setNotice(data?.error ?? "No se pudo eliminar el usuario");
+      setIsDeletingUserId(null);
+      return;
+    }
+
+    if (editingUser?.id === user.id) {
+      resetForm();
+    }
+
+    setNotice("Usuario eliminado");
+    setIsDeletingUserId(null);
+    await loadUsers();
+  };
+
   useEffect(() => {
     if (!isOpen) return;
     loadUsers();
@@ -100,9 +148,9 @@ export function UserAdminModal({
               <ShieldPlus className="size-5" />
             </div>
             <div>
-              <h2 className="font-semibold text-zinc-100">Usuarios del ERP</h2>
+              <h2 className="font-semibold text-zinc-100">Usuarios del sistema</h2>
               <p className="text-sm text-zinc-500">
-                Admin y dueño pueden crear accesos nuevos
+                Admin y dueño pueden crear y editar accesos
               </p>
             </div>
           </div>
@@ -120,9 +168,13 @@ export function UserAdminModal({
         <div className="grid gap-4 p-4 xl:grid-cols-[360px_1fr]">
           <div className="rounded-lg border border-white/10 bg-black/20 p-4">
             <div className="mb-4">
-              <p className="font-semibold text-zinc-100">Crear usuario</p>
+              <p className="font-semibold text-zinc-100">
+                {editingUser ? "Editar usuario" : "Crear usuario"}
+              </p>
               <p className="mt-1 text-sm text-zinc-500">
-                El usuario entra con su nombre de usuario y contraseña.
+                {editingUser
+                  ? "La contraseña solo cambia si escribís una nueva."
+                  : "El usuario entra con su nombre de usuario y contraseña."}
               </p>
             </div>
 
@@ -134,9 +186,10 @@ export function UserAdminModal({
                 setNotice(null);
 
                 const response = await fetch("/api/auth/usuarios", {
-                  method: "POST",
+                  method: editingUser ? "PATCH" : "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
+                    id: editingUser?.id,
                     nombre: name,
                     usuario: username,
                     email,
@@ -150,13 +203,19 @@ export function UserAdminModal({
                   | null;
 
                 if (!response.ok) {
-                  setNotice(data?.error ?? "No se pudo crear el usuario");
+                  setNotice(
+                    data?.error ??
+                      (editingUser
+                        ? "No se pudo editar el usuario"
+                        : "No se pudo crear el usuario"),
+                  );
                   setIsSaving(false);
                   return;
                 }
 
+                const message = editingUser ? "Usuario editado" : "Usuario creado";
                 resetForm();
-                setNotice("Usuario creado");
+                setNotice(message);
                 setIsSaving(false);
                 await loadUsers();
               }}
@@ -186,18 +245,25 @@ export function UserAdminModal({
                 <Input
                   id="user-email"
                   onChange={(event) => setEmail(event.target.value)}
-                  placeholder="mica@facundos.com"
+                  placeholder="empleado@local.com"
                   required
                   type="email"
                   value={email}
+                  disabled={Boolean(editingUser?.isAdmin)}
                 />
+                {editingUser?.isAdmin && (
+                  <p className="text-xs text-zinc-500">
+                    El email admin se administra desde ERP_ADMIN_EMAILS.
+                  </p>
+                )}
               </div>
               <div className="space-y-2">
                 <Label htmlFor="user-password">Contraseña</Label>
                 <Input
                   id="user-password"
                   onChange={(event) => setPassword(event.target.value)}
-                  required
+                  placeholder={editingUser ? "Dejar vacio para no cambiar" : ""}
+                  required={!editingUser}
                   type="password"
                   value={password}
                 />
@@ -211,7 +277,9 @@ export function UserAdminModal({
                     setRole(event.target.value as ManagedUser["role"])
                   }
                   value={role}
+                  disabled={Boolean(editingUser?.isAdmin)}
                 >
+                  {editingUser?.isAdmin && <option value="admin">Admin</option>}
                   <option value="empleado">Empleado</option>
                   <option value="dueno">Dueño</option>
                 </select>
@@ -229,14 +297,18 @@ export function UserAdminModal({
                   type="button"
                   variant="outline"
                 >
-                  Limpiar
+                  {editingUser ? "Cancelar edicion" : "Limpiar"}
                 </Button>
                 <Button
                   className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
                   disabled={isSaving}
                   type="submit"
                 >
-                  {isSaving ? "Guardando..." : "Crear usuario"}
+                  {isSaving
+                    ? "Guardando..."
+                    : editingUser
+                      ? "Guardar cambios"
+                      : "Crear usuario"}
                 </Button>
               </div>
             </form>
@@ -247,7 +319,7 @@ export function UserAdminModal({
               <div>
                 <p className="font-semibold text-zinc-100">Usuarios cargados</p>
                 <p className="mt-1 text-sm text-zinc-500">
-                  Accesos habilitados para entrar al ERP
+                  Accesos habilitados para entrar al sistema
                 </p>
               </div>
               <Button
@@ -299,9 +371,32 @@ export function UserAdminModal({
                         </div>
                         <p className="mt-1 text-sm text-zinc-400">{user.email}</p>
                       </div>
-                      <div className="flex items-center gap-2 text-sm text-zinc-500">
-                        <Users className="size-4" />
-                        Ultimo ingreso: {formatDate(user.lastSignInAt)}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-2 text-sm text-zinc-500">
+                          <Users className="size-4" />
+                          Ultimo ingreso: {formatDate(user.lastSignInAt)}
+                        </div>
+                        <Button
+                          className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                          onClick={() => startEditing(user)}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <Pencil className="size-4" />
+                          Editar
+                        </Button>
+                        <Button
+                          className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
+                          disabled={user.isAdmin || isDeletingUserId === user.id}
+                          onClick={() => deleteUser(user)}
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                        >
+                          <Trash2 className="size-4" />
+                          {isDeletingUserId === user.id ? "Eliminando..." : "Eliminar"}
+                        </Button>
                       </div>
                     </div>
                   </div>

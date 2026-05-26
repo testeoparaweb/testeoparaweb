@@ -57,7 +57,9 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith("/auth/error");
   const isBlockedSignUpPage =
     pathname === "/auth/sign-up" || pathname === "/auth/sign-up-success";
-  const isPublicApiRoute = pathname === "/api/auth/login";
+  const isPublicApiRoute =
+    pathname === "/api/auth/login" ||
+    (pathname === "/api/erp/diseno" && request.method === "GET");
   const isProtectedApiRoute =
     pathname.startsWith("/api/erp") ||
     pathname === "/api/auth/me" ||

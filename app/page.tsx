@@ -1,5 +1,5 @@
-import { HeladeriaErp } from "@/components/erp/heladeria-erp";
+import { GestionLocalErp } from "@/components/erp/gestion-local-erp";
 
 export default function Home() {
-  return <HeladeriaErp />;
+  return <GestionLocalErp />;
 }

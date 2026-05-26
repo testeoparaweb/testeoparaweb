@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
@@ -21,7 +21,9 @@ import {
   Lightbulb,
   LogOut,
   Minus,
+  MoreHorizontal,
   Package,
+  Palette,
   Plus,
   ReceiptText,
   Search,
@@ -38,12 +40,20 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { UserAdminModal } from "@/components/user-admin-modal";
 import type { SessionUser, UserRole } from "@/lib/auth/user";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 type ViewId =
+  | "inicio"
   | "caja"
   | "ventas"
   | "analisis"
@@ -51,15 +61,68 @@ type ViewId =
   | "finanzas"
   | "empleados"
   | "historial-empleados"
-  | "stock";
+  | "auditoria"
+  | "stock"
+  | "diseno";
 type AttendanceEvent = "entrada" | "salida";
 type ShiftName = "manana" | "tarde";
 type DiscountMode = "amount" | "percent";
 type ShiftFilter = "todo" | "manana" | "tarde";
+type SaleChannel = "local" | "pedidos_ya";
+type ChannelFilter = "todo" | SaleChannel;
+type AnalysisPeriod = "dia" | "semana" | "mes" | "ano" | "total";
 type HelpSection = {
   title: string;
   description: string;
   details: string[];
+};
+
+type ThemeSettings = {
+  background: string;
+  sidebar: string;
+  header: string;
+  panel: string;
+  panelAlt: string;
+  primary: string;
+  primaryText: string;
+  text: string;
+  muted: string;
+  border: string;
+  success: string;
+  warning: string;
+  danger: string;
+  fontFamily: string;
+  brandName: string;
+  brandSubtitle: string;
+  brandFontFamily: string;
+  brandLogoMode: "icon" | "image";
+  brandIcon: string;
+  brandImageUrl: string;
+  faviconUrl: string;
+};
+
+type ThemeColorKey = Exclude<
+  keyof ThemeSettings,
+  | "fontFamily"
+  | "brandName"
+  | "brandSubtitle"
+  | "brandFontFamily"
+  | "brandLogoMode"
+  | "brandIcon"
+  | "brandImageUrl"
+  | "faviconUrl"
+>;
+type ThemeColorPreset = {
+  id: string;
+  name: string;
+  description: string;
+  colors: Pick<ThemeSettings, ThemeColorKey>;
+  typography: ThemeTypographyPreset;
+};
+type ThemeTypographyPreset = Pick<ThemeSettings, "fontFamily" | "brandFontFamily">;
+type ThemeColorPresetDraft = Omit<ThemeColorPreset, "typography">;
+type ApplyThemePresetOptions = {
+  includeTypography: boolean;
 };
 
 type DeleteConfirmation = {
@@ -97,6 +160,9 @@ type IceCreamFlavor = {
 };
 
 type FlavorForm = IceCreamFlavor;
+type QuickStockTarget =
+  | { item: Product; type: "product" }
+  | { item: IceCreamFlavor; type: "flavor" };
 
 type CartLine = {
   lineId: string;
@@ -115,6 +181,7 @@ type CartLine = {
 type Sale = {
   id: string;
   customer: string;
+  channel: SaleChannel;
   items: number;
   method: string;
   time: string;
@@ -129,7 +196,9 @@ type SaleItem = {
   saleId: string;
   product: string;
   quantity: number;
+  price: number;
   cost: number;
+  total: number;
   flavors: string[];
   createdAt: string;
 };
@@ -168,6 +237,7 @@ type StaffMember = {
   shift: string;
   area: string;
   status: "Activo" | "Pausa" | "Ausente" | "Franco";
+  pin?: string;
 };
 
 type StaffForm = StaffMember;
@@ -202,10 +272,17 @@ type AttendanceStatus = {
   alert: "none" | "soon" | "over";
 };
 
-type CashierSession = {
-  staffId?: string | null;
-  employeeName: string;
-  assignedAt: string;
+type CashCloseRow = {
+  id: string;
+  fecha_operativa: string;
+  turno: ShiftName;
+  total_sistema: NumericValue;
+  efectivo_sistema: NumericValue;
+  efectivo_contado: NumericValue;
+  diferencia: NumericValue;
+  ventas: number;
+  observacion: string | null;
+  creado: string;
 };
 
 type NavItem = {
@@ -243,11 +320,13 @@ type FlavorRow = {
 
 type PaymentMethodRow = {
   nombre: string;
+  comision?: NumericValue;
 };
 
 type SaleRow = {
   id: string;
   cliente: string | null;
+  canal?: string | null;
   productos: number | null;
   metodo: string | null;
   hora: string | null;
@@ -262,7 +341,9 @@ type SaleItemRow = {
   venta_id: string;
   producto: string;
   cantidad: NumericValue;
+  precio?: NumericValue;
   costo: NumericValue;
+  total?: NumericValue;
   gustos: string[] | null;
   creado: string | null;
 };
@@ -306,6 +387,27 @@ type StaffRow = {
   turno: string;
   sector: string;
   estado: string;
+  pin_codigo?: string | null;
+};
+
+type AuditLogRow = {
+  id: string;
+  entidad: string;
+  entidad_id: string | null;
+  accion: string;
+  detalle: Record<string, unknown> | null;
+  usuario_nombre: string | null;
+  creado: string;
+};
+
+type AuditLog = {
+  id: string;
+  entity: string;
+  entityId: string | null;
+  action: string;
+  detail: Record<string, unknown>;
+  userName: string | null;
+  createdAt: string;
 };
 
 type AttendanceRow = {
@@ -328,361 +430,1311 @@ type ErpDataResponse = {
   tandas_gustos: FlavorBatchRow[];
   empleados: StaffRow[];
   asistencias: AttendanceRow[];
+  auditoria: AuditLogRow[];
+  comisiones_canales?: Record<string, number> | null;
+  diseno?: Partial<ThemeSettings> | null;
 };
 
 const DEFAULT_BRANCH_ID = "00000000-0000-0000-0000-000000000001";
-const CASHIER_SESSION_STORAGE_KEY = "facundos.caja-empleado";
 const PAGE_SIZE = 6;
+const SHIFT_DAY_START_HOUR = 6;
 const SHIFT_CHANGE_HOUR = 16;
 const ARGENTINA_TIMEZONE = "America/Argentina/Buenos_Aires";
 const ARGENTINA_OFFSET = "-03:00";
+const THEME_STORAGE_KEY = "gestion-local.diseno";
+const DEFAULT_FONT_FAMILY =
+  "var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const BRAND_FONT_FAMILY = "'Great Vibes', 'Dancing Script', cursive";
+const FONT_INTER = "'Inter', var(--font-geist-sans), system-ui, sans-serif";
+const FONT_DM_SANS = "'DM Sans', Arial, sans-serif";
+const FONT_MANROPE = "'Manrope', Arial, sans-serif";
+const FONT_MONTSERRAT = "'Montserrat', Arial, sans-serif";
+const FONT_POPPINS = "'Poppins', Arial, sans-serif";
+const FONT_NUNITO = "'Nunito', Arial, sans-serif";
+const FONT_RALEWAY = "'Raleway', Arial, sans-serif";
+const FONT_RUBIK = "'Rubik', Arial, sans-serif";
+const FONT_LEXEND = "'Lexend', Arial, sans-serif";
+const FONT_QUICKSAND = "'Quicksand', Arial, sans-serif";
+const FONT_OSWALD = "'Oswald', Arial, sans-serif";
+const FONT_BEBAS_NEUE = "'Bebas Neue', Arial, sans-serif";
+const FONT_LATO = "'Lato', Arial, sans-serif";
+const FONT_LORA = "'Lora', Georgia, serif";
+const FONT_PLAYFAIR = "'Playfair Display', Georgia, serif";
+const FONT_CORMORANT = "'Cormorant Garamond', Georgia, serif";
+const FONT_MERRIWEATHER = "'Merriweather', Georgia, serif";
+const FONT_COURGETTE = "'Courgette', cursive";
+const FONT_CAVEAT = "'Caveat', cursive";
+const FONT_PACIFICO = "'Pacifico', cursive";
+const FONT_LOBSTER = "'Lobster', cursive";
+const FONT_SATISFY = "'Satisfy', cursive";
+const FONT_TREBUCHET = "'Trebuchet MS', Arial, sans-serif";
+const DEFAULT_BRAND_NAME = "Nombre del local";
+const DEFAULT_BRAND_SUBTITLE = "Gestión del local";
 
 const navItems: NavItem[] = [
+  { id: "inicio", label: "Hoy", icon: LayoutDashboard },
   { id: "caja", label: "Caja", icon: ShoppingCart },
   { id: "ventas", label: "Historial ventas", icon: ReceiptText },
-  { id: "analisis", label: "AnÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡lisis", icon: BarChart3 },
+  { id: "analisis", label: "Análisis", icon: BarChart3 },
   { id: "historial", label: "Historial", icon: CalendarClock },
   { id: "finanzas", label: "Ganancia", icon: WalletCards },
   { id: "empleados", label: "Empleados", icon: Users },
   { id: "historial-empleados", label: "Historial empleados", icon: CalendarClock },
   { id: "stock", label: "Stock", icon: Package },
+  { id: "auditoria", label: "Auditoria", icon: ReceiptText },
+  { id: "diseno", label: "Diseño", icon: Palette },
+];
+
+const navGroups: Array<{ label: string; items: ViewId[] }> = [
+  { label: "Operación", items: ["inicio", "caja", "ventas", "stock"] },
+  { label: "Reportes", items: ["analisis", "historial", "finanzas"] },
+  { label: "Equipo", items: ["empleados", "historial-empleados"] },
+  { label: "Sistema", items: ["auditoria", "diseno"] },
 ];
 
 const allowedViewsByRole: Record<UserRole, ViewId[]> = {
-  admin: ["caja", "ventas", "analisis", "historial", "finanzas", "empleados", "historial-empleados", "stock"],
-  dueno: ["caja", "ventas", "analisis", "historial", "finanzas", "empleados", "historial-empleados", "stock"],
-  empleado: ["caja", "ventas", "stock"],
+  admin: ["inicio", "caja", "ventas", "analisis", "historial", "finanzas", "empleados", "historial-empleados", "stock", "auditoria", "diseno"],
+  dueno: ["inicio", "caja", "ventas", "analisis", "historial", "finanzas", "empleados", "historial-empleados", "stock", "auditoria"],
+  empleado: ["inicio", "caja", "ventas", "stock", "empleados"],
 };
 
+const saleChannelOptions: Array<{ id: SaleChannel; label: string }> = [
+  { id: "local", label: "Local" },
+  { id: "pedidos_ya", label: "Pedidos Ya" },
+];
+
+const channelFilterOptions: Array<{ id: ChannelFilter; label: string }> = [
+  { id: "todo", label: "Todo" },
+  ...saleChannelOptions,
+];
+const analysisPeriodOptions: Array<{ id: AnalysisPeriod; label: string }> = [
+  { id: "dia", label: "Dia" },
+  { id: "semana", label: "Semana" },
+  { id: "mes", label: "Mes" },
+  { id: "ano", label: "Año" },
+  { id: "total", label: "Total" },
+];
+
+const shiftFilterOptions: Array<{ id: ShiftFilter; label: string }> = [
+  { id: "todo", label: "Todo" },
+  { id: "manana", label: "Mañana" },
+  { id: "tarde", label: "Tarde" },
+];
+
+const defaultThemeSettings: ThemeSettings = {
+  background: "#070809",
+  sidebar: "#0d0f10",
+  header: "#090b0d",
+  panel: "#0f1213",
+  panelAlt: "#111417",
+  primary: "#67e8f9",
+  primaryText: "#06242a",
+  text: "#f4f4f5",
+  muted: "#a1a1aa",
+  border: "#263033",
+  success: "#34d399",
+  warning: "#facc15",
+  danger: "#fb7185",
+  fontFamily: DEFAULT_FONT_FAMILY,
+  brandName: DEFAULT_BRAND_NAME,
+  brandSubtitle: DEFAULT_BRAND_SUBTITLE,
+  brandFontFamily: BRAND_FONT_FAMILY,
+  brandLogoMode: "icon",
+  brandIcon: "snowflake",
+  brandImageUrl: "",
+  faviconUrl: "",
+};
+
+const themeFields: Array<{
+  key: ThemeColorKey;
+  label: string;
+  description: string;
+}> = [
+  { key: "background", label: "Fondo", description: "Color general de la página" },
+  { key: "sidebar", label: "Menú", description: "Barra lateral de navegación" },
+  { key: "header", label: "Encabezado", description: "Barra superior fija" },
+  { key: "panel", label: "Paneles", description: "Tarjetas y bloques principales" },
+  { key: "panelAlt", label: "Panel secundario", description: "Fondos internos y estados suaves" },
+  { key: "primary", label: "Principal", description: "Botones activos y selección" },
+  { key: "primaryText", label: "Texto principal", description: "Texto sobre el color principal" },
+  { key: "text", label: "Texto", description: "Texto claro de la interfaz" },
+  { key: "muted", label: "Texto suave", description: "Subtítulos y descripciones" },
+  { key: "border", label: "Bordes", description: "Líneas y contornos" },
+  { key: "success", label: "Correcto", description: "Estados positivos" },
+  { key: "warning", label: "Alerta", description: "Avisos y bajo stock" },
+  { key: "danger", label: "Peligro", description: "Eliminar o errores" },
+];
+
+const defaultPresetTypography: ThemeTypographyPreset = {
+  fontFamily: DEFAULT_FONT_FAMILY,
+  brandFontFamily: BRAND_FONT_FAMILY,
+};
+
+const presetTypographyById: Record<string, ThemeTypographyPreset> = {
+  original: defaultPresetTypography,
+  "glaciar-premium": {
+    fontFamily: FONT_MANROPE,
+    brandFontFamily: FONT_PLAYFAIR,
+  },
+  "pistacho-nocturno": {
+    fontFamily: FONT_QUICKSAND,
+    brandFontFamily: FONT_CAVEAT,
+  },
+  "frutilla-dark": {
+    fontFamily: FONT_POPPINS,
+    brandFontFamily: FONT_PACIFICO,
+  },
+  "cafe-tostado": {
+    fontFamily: FONT_LORA,
+    brandFontFamily: FONT_COURGETTE,
+  },
+  "menta-boutique": {
+    fontFamily: FONT_DM_SANS,
+    brandFontFamily: FONT_CORMORANT,
+  },
+  "dulce-de-leche": {
+    fontFamily: FONT_NUNITO,
+    brandFontFamily: BRAND_FONT_FAMILY,
+  },
+  "mora-neon": {
+    fontFamily: FONT_RUBIK,
+    brandFontFamily: FONT_BEBAS_NEUE,
+  },
+  "vainilla-clean": {
+    fontFamily: FONT_INTER,
+    brandFontFamily: FONT_PLAYFAIR,
+  },
+  "limon-fresco": {
+    fontFamily: FONT_QUICKSAND,
+    brandFontFamily: FONT_CAVEAT,
+  },
+  "mar-profundo": {
+    fontFamily: FONT_LEXEND,
+    brandFontFamily: FONT_OSWALD,
+  },
+  "chocolate-premium": {
+    fontFamily: FONT_MERRIWEATHER,
+    brandFontFamily: FONT_CORMORANT,
+  },
+  "cereza-vintage": {
+    fontFamily: FONT_LATO,
+    brandFontFamily: FONT_PLAYFAIR,
+  },
+  "nube-minimal": {
+    fontFamily: FONT_MANROPE,
+    brandFontFamily: FONT_INTER,
+  },
+  "carbon-menta": {
+    fontFamily: FONT_DM_SANS,
+    brandFontFamily: FONT_TREBUCHET,
+  },
+  "sandia-pop": {
+    fontFamily: FONT_NUNITO,
+    brandFontFamily: FONT_PACIFICO,
+  },
+  "lavanda-soft": {
+    fontFamily: FONT_RALEWAY,
+    brandFontFamily: FONT_CORMORANT,
+  },
+  "azul-local": {
+    fontFamily: FONT_MONTSERRAT,
+    brandFontFamily: FONT_PLAYFAIR,
+  },
+  "grafito-rojo": {
+    fontFamily: FONT_OSWALD,
+    brandFontFamily: FONT_BEBAS_NEUE,
+  },
+  "crema-clasica": {
+    fontFamily: FONT_TREBUCHET,
+    brandFontFamily: FONT_LORA,
+  },
+  "facundos-artesanal": {
+    fontFamily: FONT_MONTSERRAT,
+    brandFontFamily: FONT_LOBSTER,
+  },
+  "facundos-letrero": {
+    fontFamily: FONT_RALEWAY,
+    brandFontFamily: FONT_SATISFY,
+  },
+  "facundos-crema-turquesa": {
+    fontFamily: FONT_QUICKSAND,
+    brandFontFamily: FONT_LOBSTER,
+  },
+};
+
+const themeColorPresets = ([
+  {
+    id: "original",
+    name: "Original claro",
+    description: "Oscuro limpio con celeste moderno.",
+    colors: {
+      background: "#070809",
+      sidebar: "#0d0f10",
+      header: "#090b0d",
+      panel: "#0f1213",
+      panelAlt: "#111417",
+      primary: "#67e8f9",
+      primaryText: "#06242a",
+      text: "#f4f4f5",
+      muted: "#a1a1aa",
+      border: "#263033",
+      success: "#34d399",
+      warning: "#facc15",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "glaciar-premium",
+    name: "Glaciar premium",
+    description: "Azul hielo, blanco suave y contraste elegante.",
+    colors: {
+      background: "#05080d",
+      sidebar: "#08111a",
+      header: "#06101a",
+      panel: "#0b1520",
+      panelAlt: "#102233",
+      primary: "#7dd3fc",
+      primaryText: "#031923",
+      text: "#f8fafc",
+      muted: "#9fb6c8",
+      border: "#203446",
+      success: "#5eead4",
+      warning: "#fde68a",
+      danger: "#fda4af",
+    },
+  },
+  {
+    id: "pistacho-nocturno",
+    name: "Pistacho nocturno",
+    description: "Verde pistacho con fondo profundo.",
+    colors: {
+      background: "#070a07",
+      sidebar: "#0d130d",
+      header: "#0a100a",
+      panel: "#111711",
+      panelAlt: "#182118",
+      primary: "#bef264",
+      primaryText: "#172407",
+      text: "#f7fee7",
+      muted: "#a8b89a",
+      border: "#293623",
+      success: "#86efac",
+      warning: "#facc15",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "frutilla-dark",
+    name: "Frutilla dark",
+    description: "Rosa frutilla con paneles sobrios.",
+    colors: {
+      background: "#0c070a",
+      sidebar: "#130b10",
+      header: "#11080d",
+      panel: "#171015",
+      panelAlt: "#21141c",
+      primary: "#f472b6",
+      primaryText: "#2b071b",
+      text: "#fff7fb",
+      muted: "#c4a6b6",
+      border: "#3a2230",
+      success: "#6ee7b7",
+      warning: "#fde047",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "cafe-tostado",
+    name: "Café tostado",
+    description: "Cálido, moderno y prolijo.",
+    colors: {
+      background: "#090706",
+      sidebar: "#100c09",
+      header: "#0d0907",
+      panel: "#15100c",
+      panelAlt: "#21170f",
+      primary: "#f59e0b",
+      primaryText: "#281500",
+      text: "#fff7ed",
+      muted: "#c7aa8c",
+      border: "#3a2a1c",
+      success: "#84cc16",
+      warning: "#facc15",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "menta-boutique",
+    name: "Menta boutique",
+    description: "Menta fresca con detalles finos.",
+    colors: {
+      background: "#06100e",
+      sidebar: "#091713",
+      header: "#071310",
+      panel: "#0d1d19",
+      panelAlt: "#122823",
+      primary: "#5eead4",
+      primaryText: "#042420",
+      text: "#ecfffb",
+      muted: "#92b8b1",
+      border: "#24443d",
+      success: "#34d399",
+      warning: "#fcd34d",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "dulce-de-leche",
+    name: "Dulce de leche",
+    description: "Dorado suave, rico y comercial.",
+    colors: {
+      background: "#0b0805",
+      sidebar: "#130f09",
+      header: "#110c07",
+      panel: "#18130d",
+      panelAlt: "#23190f",
+      primary: "#d6a354",
+      primaryText: "#261804",
+      text: "#fff9ef",
+      muted: "#bda88b",
+      border: "#3b2b1b",
+      success: "#86efac",
+      warning: "#fde047",
+      danger: "#f87171",
+    },
+  },
+  {
+    id: "mora-neon",
+    name: "Mora neón",
+    description: "Violeta y cian para un estilo más llamativo.",
+    colors: {
+      background: "#070611",
+      sidebar: "#0d0a18",
+      header: "#0a0814",
+      panel: "#120f1f",
+      panelAlt: "#1a1430",
+      primary: "#a78bfa",
+      primaryText: "#180b38",
+      text: "#f7f3ff",
+      muted: "#aaa0c2",
+      border: "#30264b",
+      success: "#5eead4",
+      warning: "#fde047",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "vainilla-clean",
+    name: "Vainilla clean",
+    description: "Claro, limpio y fácil de leer.",
+    colors: {
+      background: "#f8fafc",
+      sidebar: "#eef2f7",
+      header: "#ffffff",
+      panel: "#ffffff",
+      panelAlt: "#edf2f7",
+      primary: "#2563eb",
+      primaryText: "#ffffff",
+      text: "#111827",
+      muted: "#64748b",
+      border: "#d7dee8",
+      success: "#059669",
+      warning: "#d97706",
+      danger: "#dc2626",
+    },
+  },
+  {
+    id: "limon-fresco",
+    name: "Limón fresco",
+    description: "Verde lima, alegre y bien comercial.",
+    colors: {
+      background: "#f7fee7",
+      sidebar: "#ecfccb",
+      header: "#faffed",
+      panel: "#ffffff",
+      panelAlt: "#eaf7c8",
+      primary: "#65a30d",
+      primaryText: "#ffffff",
+      text: "#1f2a12",
+      muted: "#617044",
+      border: "#c9dea2",
+      success: "#16a34a",
+      warning: "#ca8a04",
+      danger: "#e11d48",
+    },
+  },
+  {
+    id: "mar-profundo",
+    name: "Mar profundo",
+    description: "Azul marino con acento turquesa.",
+    colors: {
+      background: "#03151f",
+      sidebar: "#062031",
+      header: "#041b29",
+      panel: "#082437",
+      panelAlt: "#0d3148",
+      primary: "#22d3ee",
+      primaryText: "#06212b",
+      text: "#ecfeff",
+      muted: "#91b7c4",
+      border: "#1b465d",
+      success: "#34d399",
+      warning: "#fbbf24",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "chocolate-premium",
+    name: "Chocolate premium",
+    description: "Oscuro, elegante y cálido.",
+    colors: {
+      background: "#0b0706",
+      sidebar: "#140d0b",
+      header: "#100a08",
+      panel: "#1a110e",
+      panelAlt: "#261711",
+      primary: "#c08457",
+      primaryText: "#231207",
+      text: "#fff7ed",
+      muted: "#c6a99a",
+      border: "#3b261d",
+      success: "#86efac",
+      warning: "#fbbf24",
+      danger: "#f87171",
+    },
+  },
+  {
+    id: "cereza-vintage",
+    name: "Cereza vintage",
+    description: "Bordó, crema y presencia clásica.",
+    colors: {
+      background: "#120609",
+      sidebar: "#1c0a0f",
+      header: "#17070b",
+      panel: "#231015",
+      panelAlt: "#31171d",
+      primary: "#fb7185",
+      primaryText: "#3a0710",
+      text: "#fff1f2",
+      muted: "#d1a6ad",
+      border: "#4b222b",
+      success: "#86efac",
+      warning: "#fde047",
+      danger: "#f43f5e",
+    },
+  },
+  {
+    id: "nube-minimal",
+    name: "Nube minimal",
+    description: "Blanco suave con acentos oscuros.",
+    colors: {
+      background: "#f4f7fb",
+      sidebar: "#e8edf5",
+      header: "#fbfdff",
+      panel: "#ffffff",
+      panelAlt: "#edf1f7",
+      primary: "#111827",
+      primaryText: "#ffffff",
+      text: "#172033",
+      muted: "#667085",
+      border: "#d7dfea",
+      success: "#047857",
+      warning: "#b45309",
+      danger: "#be123c",
+    },
+  },
+  {
+    id: "carbon-menta",
+    name: "Carbón menta",
+    description: "Grafito profundo con menta brillante.",
+    colors: {
+      background: "#050707",
+      sidebar: "#0b1110",
+      header: "#080d0c",
+      panel: "#101716",
+      panelAlt: "#16211f",
+      primary: "#6ee7b7",
+      primaryText: "#052018",
+      text: "#f0fdf9",
+      muted: "#9ab8af",
+      border: "#273b36",
+      success: "#34d399",
+      warning: "#facc15",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "sandia-pop",
+    name: "Sandía pop",
+    description: "Rosa coral y verde para un local con onda.",
+    colors: {
+      background: "#fff7f7",
+      sidebar: "#ffe7ea",
+      header: "#ffffff",
+      panel: "#ffffff",
+      panelAlt: "#ffeef1",
+      primary: "#f43f5e",
+      primaryText: "#ffffff",
+      text: "#321015",
+      muted: "#87636a",
+      border: "#f7cbd3",
+      success: "#16a34a",
+      warning: "#d97706",
+      danger: "#be123c",
+    },
+  },
+  {
+    id: "lavanda-soft",
+    name: "Lavanda soft",
+    description: "Lavanda clara, delicada y moderna.",
+    colors: {
+      background: "#faf7ff",
+      sidebar: "#f1e9ff",
+      header: "#ffffff",
+      panel: "#ffffff",
+      panelAlt: "#f2eaff",
+      primary: "#7c3aed",
+      primaryText: "#ffffff",
+      text: "#24143f",
+      muted: "#74658c",
+      border: "#ddd0f4",
+      success: "#059669",
+      warning: "#b45309",
+      danger: "#e11d48",
+    },
+  },
+  {
+    id: "azul-local",
+    name: "Azul local",
+    description: "Profesional, prolijo y muy legible.",
+    colors: {
+      background: "#eff6ff",
+      sidebar: "#dbeafe",
+      header: "#ffffff",
+      panel: "#ffffff",
+      panelAlt: "#e2efff",
+      primary: "#1d4ed8",
+      primaryText: "#ffffff",
+      text: "#10213f",
+      muted: "#5d7191",
+      border: "#bfd3ef",
+      success: "#047857",
+      warning: "#b45309",
+      danger: "#dc2626",
+    },
+  },
+  {
+    id: "grafito-rojo",
+    name: "Grafito rojo",
+    description: "Serio, fuerte y con acento rojo.",
+    colors: {
+      background: "#08090b",
+      sidebar: "#111217",
+      header: "#0d0e12",
+      panel: "#15161c",
+      panelAlt: "#1f2129",
+      primary: "#ef4444",
+      primaryText: "#ffffff",
+      text: "#f4f4f5",
+      muted: "#a1a1aa",
+      border: "#30323b",
+      success: "#22c55e",
+      warning: "#f59e0b",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "crema-clasica",
+    name: "Crema clásica",
+    description: "Clara, cremosa y tranquila.",
+    colors: {
+      background: "#fffaf0",
+      sidebar: "#f8ecd8",
+      header: "#fffdf7",
+      panel: "#ffffff",
+      panelAlt: "#f6ead6",
+      primary: "#b45309",
+      primaryText: "#ffffff",
+      text: "#302013",
+      muted: "#7f6754",
+      border: "#e6d3bc",
+      success: "#15803d",
+      warning: "#ca8a04",
+      danger: "#dc2626",
+    },
+  },
+  {
+    id: "facundos-artesanal",
+    name: "Facundo's artesanal",
+    description: "Madera cálida, crema y turquesa de marca.",
+    colors: {
+      background: "#170b04",
+      sidebar: "#231107",
+      header: "#1c0d05",
+      panel: "#2d170b",
+      panelAlt: "#3a1f10",
+      primary: "#12c7c9",
+      primaryText: "#031d1e",
+      text: "#f7f0e8",
+      muted: "#b9a492",
+      border: "#5a341d",
+      success: "#6ee7b7",
+      warning: "#d6a354",
+      danger: "#fb7185",
+    },
+  },
+  {
+    id: "facundos-letrero",
+    name: "Facundo's letrero",
+    description: "Crema, madera clara y turquesa tipo cartel.",
+    colors: {
+      background: "#2b1408",
+      sidebar: "#3a1d0d",
+      header: "#32170a",
+      panel: "#4a2816",
+      panelAlt: "#5c341e",
+      primary: "#21c9c5",
+      primaryText: "#062322",
+      text: "#fff8f0",
+      muted: "#d5bdab",
+      border: "#765034",
+      success: "#8fd8a8",
+      warning: "#e0b35f",
+      danger: "#ff8a9a",
+    },
+  },
+  {
+    id: "facundos-crema-turquesa",
+    name: "Facundo's crema",
+    description: "Blanco crema y turquesa, madera solo en detalles.",
+    colors: {
+      background: "#f8f3ed",
+      sidebar: "#ffffff",
+      header: "#fffdf9",
+      panel: "#ffffff",
+      panelAlt: "#edfafa",
+      primary: "#04bfc3",
+      primaryText: "#042224",
+      text: "#23170f",
+      muted: "#7c6b60",
+      border: "#d5b89f",
+      success: "#22a06b",
+      warning: "#b87934",
+      danger: "#d94f6a",
+    },
+  },
+] satisfies ThemeColorPresetDraft[]).map((preset) => ({
+  ...preset,
+  typography: presetTypographyById[preset.id] ?? defaultPresetTypography,
+})) satisfies ThemeColorPreset[];
+
+const presetSwatchKeys: ThemeColorKey[] = [
+  "background",
+  "panel",
+  "primary",
+  "success",
+  "warning",
+  "danger",
+];
+
+const fontOptions = [
+  {
+    label: "Moderna",
+    value:
+      "var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  },
+  {
+    label: "Inter",
+    value: "'Inter', var(--font-geist-sans), system-ui, sans-serif",
+  },
+  {
+    label: "Roboto",
+    value: "'Roboto', Arial, sans-serif",
+  },
+  {
+    label: "Open Sans",
+    value: "'Open Sans', Arial, sans-serif",
+  },
+  {
+    label: "Lato",
+    value: "'Lato', Arial, sans-serif",
+  },
+  {
+    label: "Montserrat",
+    value: "'Montserrat', Arial, sans-serif",
+  },
+  {
+    label: "Poppins",
+    value: "'Poppins', Arial, sans-serif",
+  },
+  {
+    label: "Nunito",
+    value: "'Nunito', Arial, sans-serif",
+  },
+  {
+    label: "Raleway",
+    value: "'Raleway', Arial, sans-serif",
+  },
+  {
+    label: "DM Sans",
+    value: "'DM Sans', Arial, sans-serif",
+  },
+  {
+    label: "Manrope",
+    value: "'Manrope', Arial, sans-serif",
+  },
+  {
+    label: "Work Sans",
+    value: "'Work Sans', Arial, sans-serif",
+  },
+  {
+    label: "Source Sans 3",
+    value: "'Source Sans 3', Arial, sans-serif",
+  },
+  {
+    label: "Fira Sans",
+    value: "'Fira Sans', Arial, sans-serif",
+  },
+  {
+    label: "Mulish",
+    value: "'Mulish', Arial, sans-serif",
+  },
+  {
+    label: "Rubik",
+    value: "'Rubik', Arial, sans-serif",
+  },
+  {
+    label: "Lexend",
+    value: "'Lexend', Arial, sans-serif",
+  },
+  {
+    label: "Quicksand",
+    value: "'Quicksand', Arial, sans-serif",
+  },
+  {
+    label: "Oswald",
+    value: "'Oswald', Arial, sans-serif",
+  },
+  {
+    label: "Bebas Neue",
+    value: "'Bebas Neue', Arial, sans-serif",
+  },
+  {
+    label: "Anton",
+    value: "'Anton', Arial, sans-serif",
+  },
+  {
+    label: "Roboto Slab",
+    value: "'Roboto Slab', Georgia, serif",
+  },
+  {
+    label: "Merriweather",
+    value: "'Merriweather', Georgia, serif",
+  },
+  {
+    label: "Lora",
+    value: "'Lora', Georgia, serif",
+  },
+  {
+    label: "Playfair Display",
+    value: "'Playfair Display', Georgia, serif",
+  },
+  {
+    label: "Cormorant Garamond",
+    value: "'Cormorant Garamond', Georgia, serif",
+  },
+  {
+    label: "Cinzel",
+    value: "'Cinzel', Georgia, serif",
+  },
+  {
+    label: "Abril Fatface",
+    value: "'Abril Fatface', Georgia, serif",
+  },
+  {
+    label: "Café manuscrita",
+    value: "'Dancing Script', cursive",
+  },
+  {
+    label: "Pacifico",
+    value: "'Pacifico', cursive",
+  },
+  {
+    label: "Lobster",
+    value: "'Lobster', cursive",
+  },
+  {
+    label: "Satisfy",
+    value: "'Satisfy', cursive",
+  },
+  {
+    label: "Courgette",
+    value: "'Courgette', cursive",
+  },
+  {
+    label: "Caveat",
+    value: "'Caveat', cursive",
+  },
+  {
+    label: "Patrick Hand",
+    value: "'Patrick Hand', cursive",
+  },
+  {
+    label: "Kalam",
+    value: "'Kalam', cursive",
+  },
+  {
+    label: "Indie Flower",
+    value: "'Indie Flower', cursive",
+  },
+  {
+    label: "Architects Daughter",
+    value: "'Architects Daughter', cursive",
+  },
+  {
+    label: "Menú vintage",
+    value: "'Fredericka the Great', 'Rye', serif",
+  },
+  {
+    label: "Rye",
+    value: "'Rye', Georgia, serif",
+  },
+  {
+    label: "Special Elite",
+    value: "'Special Elite', monospace",
+  },
+  {
+    label: "Permanent Marker",
+    value: "'Permanent Marker', cursive",
+  },
+  {
+    label: "Amatic SC",
+    value: "'Amatic SC', cursive",
+  },
+  {
+    label: "Sistema",
+    value: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  },
+  {
+    label: "Arial",
+    value: "Arial, Helvetica, sans-serif",
+  },
+  {
+    label: "Verdana",
+    value: "Verdana, Geneva, sans-serif",
+  },
+  {
+    label: "Tahoma",
+    value: "Tahoma, Geneva, sans-serif",
+  },
+  {
+    label: "Georgia",
+    value: "Georgia, 'Times New Roman', serif",
+  },
+  {
+    label: "Trebuchet",
+    value: "'Trebuchet MS', Arial, sans-serif",
+  },
+  {
+    label: "Monoespaciada",
+    value: "'Courier New', Courier, monospace",
+  },
+];
+
+const brandIconOptions: Array<{ id: string; label: string; icon: LucideIcon }> = [
+  { id: "snowflake", label: "Helado", icon: Snowflake },
+  { id: "coffee", label: "Café", icon: Coffee },
+  { id: "store", label: "Local", icon: Store },
+  { id: "package", label: "Producto", icon: Package },
+  { id: "cart", label: "Caja", icon: ShoppingCart },
+  { id: "flame", label: "Caliente", icon: Flame },
+  { id: "money", label: "Venta", icon: BadgeDollarSign },
+  { id: "receipt", label: "Recibo", icon: ReceiptText },
+  { id: "wallet", label: "Ganancia", icon: WalletCards },
+];
+
+const getBrandIconOption = (iconId: string) =>
+  brandIconOptions.find((option) => option.id === iconId) ?? brandIconOptions[0];
+
+const getBrandLogoUrl = (theme: ThemeSettings) =>
+  theme.brandLogoMode === "image" && theme.brandImageUrl.trim()
+    ? theme.brandImageUrl.trim()
+    : "";
+
+const isThemeColorPresetActive = (
+  theme: ThemeSettings,
+  preset: ThemeColorPreset,
+) =>
+  themeFields.every(
+    ({ key }) => theme[key].toLowerCase() === preset.colors[key].toLowerCase(),
+  );
 
 const helpContentByView: Record<
   ViewId,
   { title: string; summary: string; sections: HelpSection[] }
 > = {
-  caja: {
-    title: "Ayuda de caja",
-    summary: "Para tomar pedidos rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido y cobrar sin perder ventas ni stock.",
+  inicio: {
+    title: "Ayuda de hoy",
+    summary: "Para ver lo importante del dia y cerrar caja por turno.",
     sections: [
       {
-        title: "CategorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­as",
+        title: "Tablero",
         description:
-          "Primero elegÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ una categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a y despuÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s un producto. AsÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ el empleado encuentra todo mÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido.",
+          "Resume ventas, empleados trabajando, reposicion y ganancia real.",
         details: [
-          "Cuando entrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s a Caja, primero ves las categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­as grandes. Eso sirve para no mezclar todo el catÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡logo junto.",
-          "Si tocÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s una categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a, entrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s a esa vista y ahÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ aparecen solo los productos de ese rubro. Con Volver regresÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s al inicio.",
-          "Si no sabÃƒÆ’Ã‚Â©s dÃƒÆ’Ã‚Â³nde estÃƒÆ’Ã‚Â¡ algo, usÃƒÆ’Ã‚Â¡ el buscador de esa categorÃƒÆ’Ã‚Â­a para filtrar por nombre.",
+          "Vendido hoy usa las ventas cargadas desde Caja.",
+          "Ganancia real descuenta costo vendido, gastos fijos y comisiones.",
+          "Reposicion junta productos y gustos que estan bajo minimo.",
         ],
       },
       {
-        title: "Helados y gustos",
+        title: "Cierre",
         description:
-          "Si el producto necesita gustos, se abre una ventana para elegir sabores. Podes buscar sabores, repetirlos y ver el stock estimado.",
+          "Carga el efectivo contado y guarda la diferencia contra el sistema.",
         details: [
-          "Los productos de helado abren una ventana especial para elegir gustos segun el maximo permitido por ese producto.",
-          "El buscador de sabores filtra por nombre o por categorÃƒÆ’Ã‚Â­a del gusto, por ejemplo crema o al agua.",
-          "Si el cliente repite un sabor, podes tocar el mismo gusto mas de una vez y el sistema lo cuenta en el pedido.",
+          "El turno se detecta por horario.",
+          "El sistema compara efectivo contado contra ventas en efectivo.",
+          "Cada cierre queda guardado y tambien entra en auditoria.",
+        ],
+      },
+    ],
+  },
+  caja: {
+    title: "Ayuda de caja",
+    summary: "Para tomar pedidos rápido y cobrar sin perder ventas ni stock.",
+    sections: [
+      {
+        title: "Categorías",
+        description:
+          "Primero elegí una categoría y después un producto. Así el empleado encuentra todo más rápido.",
+        details: [
+          "Cuando entrás a Caja, primero ves las categorías grandes para no mezclar todo el catálogo.",
+          "Si tocás una categoría, entrás a esa vista y aparecen solo los productos de ese rubro.",
+          "Con Volver regresás al inicio, y el buscador filtra dentro de la categoría abierta.",
+        ],
+      },
+      {
+        title: "Gustos",
+        description:
+          "Si el producto es helado, se abre el selector de sabores con buscador rápido.",
+        details: [
+          "El selector respeta el máximo de gustos configurado en cada producto.",
+          "Podés repetir el mismo sabor si el cliente lo pide.",
+          "El stock de gustos puede quedar en negativo para que después el dueño calibre mejor el balde.",
         ],
       },
       {
         title: "Pedido",
         description:
-          "A la derecha se arma el pedido. Desde ahi podes sumar, restar, borrar lineas, elegir metodo de pago y cobrar.",
+          "A la derecha se arma el pedido antes de cobrar.",
         details: [
-          "Cada vez que agregas un producto, aparece en el panel del pedido con cantidad, total y gustos si corresponde.",
-          "Los botones de sumar, restar o borrar sirven para corregir el pedido antes de cobrarlo.",
-          "Cuando tocas Cobrar pedido, se guarda la venta, descuenta stock y despues aparece en analisis e historial.",
+          "Podés sumar, restar, borrar líneas, aplicar descuento, elegir método de pago y marcar si entra por Local o Pedidos Ya.",
+          "Cuando tocás Cobrar pedido, se guarda la venta y se descuenta stock.",
+          "Después aparece en análisis, historial de ventas y stock.",
         ],
       },
       {
-        title: "Empleado en caja",
+        title: "Empleado de caja",
         description:
-          "Al entrar en caja se elige quien esta usando la compu. Si no tenia entrada abierta, se marca automaticamente.",
+          "Al entrar en caja se elige quién está usando la compu.",
         details: [
-          "La caja queda asociada al empleado elegido para saber quien estaba atendiendo en ese momento.",
-          "Si cambia la persona que usa la caja, podes tocar Cambiar empleado y seleccionar a la nueva.",
-          "Salir de caja te deja elegir entre cerrar solo la sesiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n o marcar tambiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©n que el turno terminÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³.",
+          "La caja queda asociada al empleado elegido para saber quién atendía.",
+          "Si no tenía entrada abierta, se marca automáticamente.",
+          "Salir de caja permite cerrar solo la sesión o marcar también que terminó el turno.",
         ],
       },
       {
         title: "Bajo stock",
         description:
-          "El botÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n de bajo stock muestra rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido los productos o gustos que estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡n en o por debajo del mÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­nimo.",
+          "El botón de bajo stock muestra rápido productos o gustos para reponer.",
         details: [
-          "Si tocas Bajo stock, entras en una vista especial para revisar faltantes sin recorrer toda la caja.",
-          "Ahi podes cambiar entre Productos y Gustos para ver que hay que reponer.",
-          "Esta vista es solo informativa para trabajar mÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡s rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido; la reposiciÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n real se hace desde Stock.",
+          "Esta vista es informativa para trabajar más rápido.",
+          "La reposición real se hace desde Stock.",
+          "Podés ver faltantes de productos o de gustos de helado.",
         ],
       },
     ],
   },
   ventas: {
     title: "Ayuda de historial de ventas",
-    summary: "Para revisar ventas recientes de forma simple y rapida.",
+    summary: "Para revisar ventas recientes sin cargar de más la pantalla.",
     sections: [
       {
-        title: "Listado",
+        title: "Lista",
         description:
-          "Muestra las ventas ordenadas de la mas reciente a la mas vieja.",
+          "Muestra las ventas de la más reciente a la más antigua, de a 10.",
         details: [
-          "Cada tarjeta muestra lo justo para trabajar rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido: fecha, hora, cliente, mÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©todo de pago y total.",
-          "Tambien aparece un resumen corto del pedido para identificar la venta sin abrir analisis.",
-          "Esta vista estÃƒÆ’Ã‚Â¡ pensada para caja y consulta rÃƒÆ’Ã‚Â¡pida del equipo.",
+          "Cada tarjeta muestra fecha, hora, cliente, método de pago y total.",
+          "El empleado puede ver esta sección para consultar ventas cobradas.",
+          "La lista muestra lo necesario sin llenar la pantalla de datos técnicos.",
         ],
       },
       {
-        title: "Paginas",
+        title: "Detalle",
         description:
-          "Las ventas se muestran de a 10 por pagina para que no quede una lista gigante.",
+          "Al tocar una venta, se despliega toda la información.",
         details: [
-          "Podes ir viendo las siguientes tandas sin cargar todo junto en pantalla.",
-          "La primera pagina siempre muestra las ultimas ventas guardadas.",
-          "Sirve para revisar el movimiento del dia sin perder tiempo.",
+          "Ves subtotal, descuento, total final y productos vendidos.",
+          "Si hubo gustos elegidos, también aparecen en el detalle.",
+          "Sirve para revisar un pedido sin entrar a la base de datos.",
         ],
       },
     ],
   },
   analisis: {
-    title: "Ayuda de analisis",
-    summary: "Para ver ventas, costo vendido, ganancias y detalle del mes.",
+    title: "Ayuda de análisis",
+    summary: "Para ver ventas, costos, rankings y ganancia real del mes.",
     sections: [
       {
         title: "Resumen",
         description:
-          "Muestra ventas brutas, costo de productos vendidos, gastos fijos, productos vendidos y ganancia real.",
+          "Muestra total vendido, productos vendidos, costo vendido, gastos y ganancia real.",
         details: [
-          "Ventas brutas muestra todo lo cobrado en el periodo sin restar nada.",
-          "Costo de productos vendidos usa el costo cargado en cada producto y lo descuenta solo si ese producto se vendio.",
-          "Ganancia real es el numero final despues de restar costo vendido y gastos fijos.",
+          "Ventas brutas muestra todo lo cobrado sin restar nada.",
+          "Costo vendido usa el costo de cada producto que realmente se vendió.",
+          "Ganancia real resta costo vendido y gastos fijos.",
+        ],
+      },
+      {
+        title: "Turnos",
+        description:
+          "Podés filtrar por todo, mañana o tarde.",
+        details: [
+          "Mañana toma ventas antes de las 16:00.",
+          "Tarde toma ventas desde las 16:00.",
+          "Los gastos se estiman proporcionalmente cuando mirás un turno.",
         ],
       },
       {
         title: "Rankings",
         description:
-          "Ahi ves los gustos y productos mas pedidos segun las ventas guardadas.",
+          "Muestra gustos y productos más vendidos.",
         details: [
-          "El ranking de gustos sale de los gustos elegidos en las ventas, no de una carga manual.",
-          "El ranking de productos suma cantidades vendidas del mes para mostrar que rota mas.",
-          "Sirve para detectar que conviene producir mas o que producto conviene destacar.",
-        ],
-      },
-      {
-        title: "Ventas",
-        description:
-          "Cada fila es una venta. Si la tocas, se despliega el detalle completo con productos, gustos, cliente, metodo y total.",
-        details: [
-          "La fila muestra un resumen corto del pedido para que no tengas que leer codigos internos.",
-          "Cuando la expandis, ves fecha y hora exacta, subtotal, descuento, total y cada producto del pedido.",
-          "Sirve para revisar errores, confirmar que se cobro algo o entender que se vendio en una venta puntual.",
-        ],
-      },
-      {
-        title: "Gastos",
-        description:
-          "Resume lo que se resta para calcular la ganancia real del negocio.",
-        details: [
-          "AhÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ podÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s comparar rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido el costo vendido contra los gastos fijos del local.",
-          "No mezcla compras genericas con ventas; la idea es que la ganancia refleje lo que realmente se vendio.",
-          "Si algo no te cierra en la ganancia, esta vista es el primer lugar para revisarlo.",
+          "Sirve para saber qué conviene producir más.",
+          "También ayuda a ver qué productos conviene destacar.",
+          "Los datos salen de ventas reales guardadas.",
         ],
       },
     ],
   },
   historial: {
     title: "Ayuda de historial",
-    summary: "Para comparar como viene el negocio por dia, semana, mes o aÃƒÆ’Ã‚Â±o.",
+    summary: "Para comparar cómo viene el negocio por día, semana, mes o año.",
     sections: [
       {
-        title: "Periodos",
+        title: "Períodos",
         description:
-          "Usa los botones Diario, Semanal, Mensual y Anual para cambiar la vista del historial.",
+          "Usá Diario, Semanal, Mensual y Anual para cambiar la tabla.",
         details: [
-          "Cada boton cambia solo la tabla de ese periodo para que no tengas todo mezclado en la misma pantalla.",
-          "Diario sirve para ver la ultima semana, Semanal resume bloques de 7 dias, Mensual compara meses y Anual compara aÃƒÆ’Ã‚Â±os.",
-          "Es ideal para detectar si hubo semanas flojas, meses fuertes o cambios en la estacionalidad.",
+          "Cada botón cambia solo la información visible.",
+          "Diario muestra la última semana.",
+          "Semanal, mensual y anual sirven para comparar períodos más grandes.",
         ],
       },
       {
         title: "Neto",
         description:
-          "El valor neto ya descuenta costo de productos vendidos y gastos fijos del periodo.",
+          "El valor neto descuenta costo vendido y gastos fijos del período.",
         details: [
-          "El neto no es solo ventas menos gastos fijos: tambien resta el costo de lo que realmente se vendio en ese periodo.",
-          "Por eso puede pasar que un periodo venda mucho pero deje menos margen que otro.",
-          "Te sirve para leer el negocio con mas precision, no solo por caja bruta.",
+          "No es solo ventas menos gastos.",
+          "También resta el costo de lo que realmente se vendió.",
+          "Sirve para leer margen real, no solo caja bruta.",
         ],
       },
       {
         title: "Productos",
         description:
-          "La ultima columna muestra cuantas unidades se vendieron en cada periodo.",
+          "La última columna muestra cuántas unidades se vendieron.",
         details: [
-          "Ese numero te ayuda a entender si el ingreso vino por vender mucho o por vender tickets mas caros.",
-          "Comparar productos vendidos con el total neto sirve para medir volumen contra margen.",
-          "Tambien ayuda a detectar dias con mucho movimiento aunque el importe total no haya sido tan alto.",
+          "Ayuda a entender si el ingreso vino por volumen o por tickets más altos.",
+          "Comparar productos vendidos con neto sirve para medir volumen contra margen.",
+          "También detecta días con mucho movimiento aunque no hayan dejado tanto importe.",
         ],
       },
     ],
   },
   finanzas: {
     title: "Ayuda de ganancia",
-    summary: "Para ver cuanto entra, cuanto cuesta vender y cuanto queda realmente.",
+    summary: "Para ver cuánto entra, cuánto cuesta vender y cuánto queda.",
     sections: [
       {
         title: "Total vendido",
         description:
-          "Es todo lo que entro por ventas antes de restar costos y gastos.",
+          "Es todo lo que entró por ventas antes de restar costos y gastos.",
         details: [
-          "Este numero es bruto: muestra cuanto entro por caja, mostrador o los metodos de pago guardados.",
-          "No significa ganancia; solo es el ingreso antes de cualquier descuento.",
-          "Sirve como punto de partida para entender el resto del cuadro.",
+          "Este número es bruto.",
+          "No significa ganancia.",
+          "Sirve como punto de partida para leer el negocio.",
         ],
       },
       {
         title: "Costo vendido",
         description:
-          "Se calcula automatico con el costo cargado en cada producto y solo descuenta lo que realmente se vendio.",
+          "Se calcula con el costo cargado en cada producto vendido.",
         details: [
-          "Si un producto no se vendio, su costo no impacta en esta parte del calculo.",
-          "Esto evita mezclar compras generales con margen real de lo que salio por venta.",
-          "Por eso es importante mantener bien cargado el costo de cada producto en Stock.",
+          "Si un producto no se vendió, su costo no impacta.",
+          "Esto evita descontar insumos que todavía no se vendieron.",
+          "Por eso es importante mantener bien cargado el costo en Stock.",
         ],
       },
       {
         title: "Gastos fijos",
         description:
-          "Aca editas sueldos, luz, agua, gas, alquiler y otros gastos generales del local.",
+          "Acá editás sueldos, luz, agua, gas, alquiler y otros gastos.",
         details: [
-          "Estos gastos se descuentan aparte del costo del producto vendido.",
-          "Sirven para representar la carga fija del negocio: personal, servicios y alquiler.",
-          "Cuando cambias uno y guardas, la ganancia se recalcula con ese valor hacia adelante.",
+          "Estos gastos se descuentan aparte del costo vendido.",
+          "Cuando guardás un cambio, aplica hacia adelante.",
+          "Los períodos anteriores conservan el gasto que tenían en ese momento.",
         ],
       },
       {
         title: "Ganancia real",
         description:
-          "Es el resultado final: ventas menos costo vendido y menos gastos fijos.",
+          "Es ventas menos costo vendido y menos gastos fijos.",
         details: [
-          "Es el numero mas confiable para ver cuanto deja realmente el negocio en el periodo.",
-          "No depende de cargar compras manuales de materiales para cada venta, sino del costo del producto que si se vendio.",
-          "Si queres mejorar este numero, lo importante es mirar margen por producto y gastos fijos.",
+          "Es el número más útil para ver cuánto deja realmente el negocio.",
+          "No depende de cargar compras manuales de materiales.",
+          "Depende de ventas, costos por producto y gastos fijos.",
         ],
       },
     ],
   },
   empleados: {
     title: "Ayuda de empleados",
-    summary: "Para ver rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido quiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©n estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ trabajando y marcar entradas o salidas.",
+    summary: "Para ver rápido quién está trabajando y marcar entradas o salidas.",
     sections: [
       {
         title: "Equipo activo",
         description:
-          "Esta vista queda simple para mirar quien esta en jornada, quien esta en caja y quien necesita una salida.",
+          "Esta vista muestra quién está en jornada, quién está en caja y quién necesita salida.",
         details: [
-          "Las tarjetas muestran lo importante del momento para no perder tiempo leyendo de mas.",
-          "Si alguien esta usando la caja, queda marcado para que el equipo lo vea enseguida.",
-          "Los filtros te dejan ver solo quienes estan en jornada, con aviso o a todo el equipo.",
+          "Las tarjetas muestran solo lo importante del momento.",
+          "Si alguien usa la caja, queda marcado.",
+          "Los filtros ayudan a ver jornada, avisos o todo el equipo.",
         ],
       },
       {
         title: "Entrada y salida",
         description:
-          "Los botones registran cuando cada empleado entra o sale y lo guardan en los registros.",
+          "Los botones registran cuándo cada empleado entra o sale.",
         details: [
-          "Entrada guarda el momento en que empieza a trabajar y Salida marca cuando termina o se retira.",
-          "Cada registro queda con fecha completa y turno para poder revisarlo despues.",
-          "Si el empleado entra desde la caja y no tenia jornada abierta, la entrada se marca sola.",
+          "Entrada guarda el comienzo de la jornada.",
+          "Salida marca cuando termina o se retira.",
+          "Cada registro queda con fecha completa y turno.",
         ],
       },
       {
-        title: "Avisos de horario",
+        title: "Avisos",
         description:
-          "La pantalla muestra quien esta en jornada, quien esta por cumplir 8 horas y quien ya se paso.",
+          "La pantalla avisa cuando alguien está por cumplir 8 horas o ya se pasó.",
         details: [
-          "Cuando alguien estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ por llegar a las 8 horas aparece en aviso para que el encargado lo vea rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido.",
-          "Si ya se paso del horario, el cartel cambia para que no se pierda de vista.",
-          "Esto sirve incluso si se superponen empleados de manana y tarde en un rato del cambio de turno.",
-        ],
-      },
-      {
-        title: "Registros",
-        description:
-          "A la derecha ves el historial reciente con fecha completa y tipo de movimiento.",
-        details: [
-          "La columna de registros muestra entradas y salidas recientes con una marca visual distinta para cada tipo.",
-          "Sirve para confirmar rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido si alguien ya entrÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³, saliÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³ o si se olvidaron de marcar.",
-          "Tambien te deja revisar los movimientos del dia sin entrar a otra pantalla.",
+          "Sirve para que el encargado lo vea rápido.",
+          "Funciona aunque se superpongan empleados de mañana y tarde.",
+          "Los errores se corrigen desde Historial empleados.",
         ],
       },
     ],
   },
   "historial-empleados": {
     title: "Ayuda de historial de empleados",
-    summary: "Para administrar empleados y corregir fichajes con calma.",
+    summary: "Para administrar empleados y corregir fichajes.",
     sections: [
       {
-        title: "Alta y edicion",
+        title: "Personal",
         description:
-          "Aca se crean empleados nuevos y se editan los datos de los que ya existen.",
+          "Acá se crean empleados nuevos y se editan los existentes.",
         details: [
-          "Usa Agregar empleado para cargar nombre, rol, turno, sector y estado.",
-          "Editar sirve para corregir datos del personal sin mezclarlo con la pantalla operativa.",
-          "Esta vista queda reservada para dueno y admin, asi los empleados no tocan datos sensibles.",
+          "Agregar empleado carga nombre, rol, turno, sector y estado.",
+          "Editar sirve para corregir datos del personal.",
+          "Esta vista queda para dueño y admin.",
         ],
       },
       {
         title: "Fichajes",
         description:
-          "Aca ves el historial completo de entradas y salidas y podes corregirlo si alguien se olvido.",
+          "Acá ves y corregís entradas y salidas.",
         details: [
-          "Se pueden agregar fichajes manuales cuando alguien no marco entrada o salida.",
-          "Tambien se pueden editar registros ya cargados para arreglar horario, tipo o empleado.",
-          "La idea es concentrar las correcciones en un solo lugar y dejar la otra vista mucho mas limpia.",
+          "Podés agregar fichajes manuales si alguien se olvidó.",
+          "También podés editar registros ya cargados.",
+          "La vista operativa de Empleados queda más simple.",
         ],
       },
     ],
   },
   stock: {
     title: "Ayuda de stock",
-    summary: "Para controlar productos, gustos y alertas de reposicion.",
+    summary: "Para controlar productos, gustos y alertas de reposición.",
     sections: [
       {
         title: "Productos",
         description:
-          "Aca editas nombre, precio, costo, stock, minimo, unidad, imagen y configuracion de gustos.",
+          "Acá editás nombre, precio, costo, stock, mínimo, unidad, imagen y gustos.",
         details: [
-          "Cada producto tiene su precio de venta, su costo y su stock disponible. Eso alimenta tanto caja como ganancia real.",
-          "El minimo sirve para disparar alertas de reposicion y mostrar bajo stock en varias partes del sistema.",
-          "Si es un helado, tambien podes definir cuantos gustos permite y cuanto descuenta del stock de sabores.",
+          "Cada producto alimenta caja, stock y ganancia real.",
+          "El mínimo dispara alertas de reposición.",
+          "Si es helado, también define cuántos gustos permite y cuánto descuenta.",
         ],
       },
       {
         title: "Gustos",
         description:
-          "AcÃƒÆ’Ã‚Â¡ controlÃƒÆ’Ã‚Â¡s stock de sabores, categorÃƒÆ’Ã‚Â­a, color, baldes y reposiciÃƒÆ’Ã‚Â³n por gusto.",
+          "Acá controlás stock de sabores, categoría, color, baldes y reposición.",
         details: [
-          "Los gustos tienen stock propio, mÃƒÆ’Ã‚Â­nimo, categorÃƒÆ’Ã‚Â­a y color para que sea mÃƒÆ’Ã‚Â¡s fÃƒÆ’Ã‚Â¡cil usarlos en caja.",
-          "Tambien podes cargar tandas o baldes para calibrar cuantas porciones reales te rinde cada sabor.",
-          "Esto ayuda a que el stock de sabores baje con las ventas de helado y no quede solo a ojo.",
+          "Los gustos tienen stock propio, mínimo, categoría y color.",
+          "Podés cargar tandas o baldes para calibrar rendimiento.",
+          "El stock de gustos baja con las ventas de helado.",
         ],
       },
       {
         title: "Alertas",
         description:
-          "Los filtros de bajo stock sirven para encontrar rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido quÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â© hay que reponer.",
+          "Los filtros de bajo stock muestran rápido qué hay que reponer.",
         details: [
-          "Podes filtrar solo productos bajos o solo gustos bajos segun que necesites revisar.",
-          "Las alertas aparecen para acelerar la reposicion y evitar quedarte sin algo en caja.",
-          "Lo ideal es revisar esta parte antes de los horarios fuertes del local.",
+          "Podés filtrar productos bajos o gustos bajos.",
+          "Las alertas ayudan a no quedarte sin algo en caja.",
+          "Conviene revisarlo antes de los horarios fuertes.",
         ],
       },
       {
-        title: "Costo del producto",
+        title: "Costo",
         description:
-          "El costo que cargues en cada producto se usa despues para calcular la ganancia real cuando ese producto se vende.",
+          "El costo de cada producto se usa para calcular ganancia real.",
         details: [
-          "Si el costo esta mal cargado, la ganancia real tambien va a quedar mal calculada.",
-          "No hace falta cargar compras manuales para que impacten en cada venta: el sistema usa este costo por producto vendido.",
-          "Por eso conviene revisar el costo cada vez que cambian fuerte los insumos o la receta.",
+          "Si el costo está mal, la ganancia real queda mal.",
+          "El sistema usa el costo solo cuando el producto se vende.",
+          "Revisalo cuando cambien insumos o recetas.",
+        ],
+      },
+    ],
+  },
+  diseno: {
+    title: "Ayuda de diseño",
+    summary: "Para cambiar los colores principales de la página.",
+    sections: [
+      {
+        title: "Colores",
+        description:
+          "Elegí los colores y la tipografía que querés usar en la página.",
+        details: [
+          "Los cambios se aplican en el momento para que puedas probarlos.",
+          "Guardar diseño deja esos cambios persistidos.",
+          "Restablecer vuelve al diseño oscuro original.",
+        ],
+      },
+    ],
+  },
+  auditoria: {
+    title: "Ayuda de auditoria",
+    summary: "Para revisar cambios importantes hechos en el sistema.",
+    sections: [
+      {
+        title: "Cambios",
+        description:
+          "Muestra ediciones de productos, stock, gastos, comisiones, empleados y cierres.",
+        details: [
+          "Cada registro guarda accion, usuario y fecha.",
+          "Sirve para saber quien cambio algo y cuando.",
+          "Es una trazabilidad rapida de la operacion.",
         ],
       },
     ],
@@ -823,6 +1875,159 @@ const getCurrentTime = () => {
 
 const toNumber = (value: NumericValue) => Number(value ?? 0);
 
+const isColorValue = (value: unknown): value is string =>
+  typeof value === "string" &&
+  (/^#[0-9a-f]{6}$/i.test(value.trim()) ||
+    /^rgba?\(/i.test(value.trim()));
+
+const isFontFamilyValue = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.trim().length > 0 &&
+  value.trim().length <= 180 &&
+  !/[;{}<>]/.test(value);
+
+const isSafeTextValue = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.trim().length > 0 &&
+  value.trim().length <= 80 &&
+  !/[<>]/.test(value);
+
+const isSafeOptionalUrl = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  return (
+    trimmed.length === 0 ||
+    ((trimmed.startsWith("https://") ||
+      trimmed.startsWith("http://") ||
+      trimmed.startsWith("/") ||
+      trimmed.startsWith("data:image/")) &&
+      trimmed.length <= 600)
+  );
+};
+
+const getFontOptionLabel = (fontFamily: string) =>
+  fontOptions.find((option) => option.value === fontFamily)?.label ?? "Personalizada";
+
+const createBrandFavicon = (theme: ThemeSettings) => {
+  const label = (theme.brandName.trim() || DEFAULT_BRAND_NAME).slice(0, 1).toUpperCase();
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${theme.primary}"/><text x="32" y="40" text-anchor="middle" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="${theme.primaryText}">${label}</text></svg>`;
+
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+};
+
+const applyBrowserBrandSettings = (theme: ThemeSettings) => {
+  if (typeof document === "undefined") return;
+
+  const brandName = theme.brandName.trim() || DEFAULT_BRAND_NAME;
+  document.title = brandName;
+
+  const faviconHref =
+    theme.faviconUrl.trim() ||
+    (theme.brandLogoMode === "image" ? theme.brandImageUrl.trim() : "") ||
+    createBrandFavicon(theme);
+  let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+
+  if (!favicon) {
+    favicon = document.createElement("link");
+    favicon.rel = "icon";
+    document.head.appendChild(favicon);
+  }
+
+  favicon.href = faviconHref;
+};
+
+const normalizeThemeSettings = (
+  value?: Partial<ThemeSettings> | null,
+): ThemeSettings => {
+  const normalized = { ...defaultThemeSettings };
+
+  if (!value || typeof value !== "object") {
+    return normalized;
+  }
+
+  themeFields.forEach((field) => {
+    const nextValue = value[field.key];
+    if (isColorValue(nextValue)) {
+      normalized[field.key] = nextValue.trim();
+    }
+  });
+
+  if (value.fontFamily?.trim() === BRAND_FONT_FAMILY) {
+    normalized.fontFamily = defaultThemeSettings.fontFamily;
+  } else if (isFontFamilyValue(value.fontFamily)) {
+    normalized.fontFamily = value.fontFamily.trim();
+  }
+
+  if (isSafeTextValue(value.brandName)) {
+    normalized.brandName = value.brandName.trim();
+  }
+
+  if (isSafeTextValue(value.brandSubtitle)) {
+    normalized.brandSubtitle = value.brandSubtitle.trim();
+  }
+
+  if (isFontFamilyValue(value.brandFontFamily)) {
+    normalized.brandFontFamily = value.brandFontFamily.trim();
+  }
+
+  if (value.brandLogoMode === "icon" || value.brandLogoMode === "image") {
+    normalized.brandLogoMode = value.brandLogoMode;
+  }
+
+  if (
+    typeof value.brandIcon === "string" &&
+    brandIconOptions.some((option) => option.id === value.brandIcon)
+  ) {
+    normalized.brandIcon = value.brandIcon;
+  }
+
+  if (isSafeOptionalUrl(value.brandImageUrl)) {
+    normalized.brandImageUrl = value.brandImageUrl.trim();
+  }
+
+  if (isSafeOptionalUrl(value.faviconUrl)) {
+    normalized.faviconUrl = value.faviconUrl.trim();
+  }
+
+  return normalized;
+};
+
+const buildThemeStyle = (theme: ThemeSettings) =>
+  ({
+    "--erp-bg": theme.background,
+    "--erp-sidebar": theme.sidebar,
+    "--erp-header": theme.header,
+    "--erp-panel": theme.panel,
+    "--erp-panel-alt": theme.panelAlt,
+    "--erp-primary": theme.primary,
+    "--erp-primary-text": theme.primaryText,
+    "--erp-text": theme.text,
+    "--erp-muted": theme.muted,
+    "--erp-border": theme.border,
+    "--erp-success": theme.success,
+    "--erp-warning": theme.warning,
+    "--erp-danger": theme.danger,
+    "--erp-primary-soft": `color-mix(in srgb, ${theme.primary} 12%, transparent)`,
+    "--erp-primary-softer": `color-mix(in srgb, ${theme.primary} 6%, transparent)`,
+    "--erp-primary-hover": `color-mix(in srgb, ${theme.primary} 22%, transparent)`,
+    "--erp-primary-border": `color-mix(in srgb, ${theme.primary} 42%, transparent)`,
+    "--erp-success-soft": `color-mix(in srgb, ${theme.success} 12%, transparent)`,
+    "--erp-success-hover": `color-mix(in srgb, ${theme.success} 22%, transparent)`,
+    "--erp-success-border": `color-mix(in srgb, ${theme.success} 38%, transparent)`,
+    "--erp-warning-soft": `color-mix(in srgb, ${theme.warning} 12%, transparent)`,
+    "--erp-warning-hover": `color-mix(in srgb, ${theme.warning} 22%, transparent)`,
+    "--erp-warning-border": `color-mix(in srgb, ${theme.warning} 38%, transparent)`,
+    "--erp-danger-soft": `color-mix(in srgb, ${theme.danger} 12%, transparent)`,
+    "--erp-danger-hover": `color-mix(in srgb, ${theme.danger} 22%, transparent)`,
+    "--erp-danger-border": `color-mix(in srgb, ${theme.danger} 38%, transparent)`,
+    "--erp-panel-soft": `color-mix(in srgb, ${theme.panelAlt} 72%, transparent)`,
+    "--erp-panel-softer": `color-mix(in srgb, ${theme.panelAlt} 42%, transparent)`,
+    "--erp-panel-hover": `color-mix(in srgb, ${theme.text} 8%, ${theme.panelAlt})`,
+    "--erp-font": theme.fontFamily,
+    "--erp-brand-font": theme.brandFontFamily,
+    fontFamily: "var(--erp-font)",
+  }) as CSSProperties & Record<`--${string}`, string>;
+
 const createIdFromName = (name: string) =>
   name
     .trim()
@@ -861,7 +2066,7 @@ const createAutomaticId = (
 };
 
 const getFlavorCategoryName = (category?: string | null) =>
-  category?.trim() || "Sin categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a";
+  category?.trim() || "Sin categoría";
 
 const groupFlavorsByCategory = (flavors: IceCreamFlavor[]) => {
   const groups = flavors.reduce<Map<string, IceCreamFlavor[]>>((map, flavor) => {
@@ -885,8 +2090,12 @@ const getSaleHour = (sale: Sale) => {
   return Number(hour || 0);
 };
 
-const getCurrentShift = (): ShiftName =>
-  getArgentinaDateParts(new Date()).hour < SHIFT_CHANGE_HOUR ? "manana" : "tarde";
+const getCurrentShift = (): ShiftName => {
+  const hour = getArgentinaDateParts(new Date()).hour;
+  return hour >= SHIFT_DAY_START_HOUR && hour < SHIFT_CHANGE_HOUR
+    ? "manana"
+    : "tarde";
+};
 
 const saleMatchesShiftFilter = (sale: Sale, shiftFilter: ShiftFilter) => {
   if (shiftFilter === "todo") {
@@ -895,9 +2104,21 @@ const saleMatchesShiftFilter = (sale: Sale, shiftFilter: ShiftFilter) => {
 
   const saleHour = getSaleHour(sale);
   return shiftFilter === "manana"
-    ? saleHour < SHIFT_CHANGE_HOUR
-    : saleHour >= SHIFT_CHANGE_HOUR;
+    ? saleHour >= SHIFT_DAY_START_HOUR && saleHour < SHIFT_CHANGE_HOUR
+    : saleHour < SHIFT_DAY_START_HOUR || saleHour >= SHIFT_CHANGE_HOUR;
 };
+
+const saleIsMorning = (sale: Sale) =>
+  saleMatchesShiftFilter(sale, "manana");
+
+const saleMatchesChannelFilter = (sale: Sale, channelFilter: ChannelFilter) =>
+  channelFilter === "todo" || sale.channel === channelFilter;
+
+const isProductLowStock = (product: Pick<Product, "minStock" | "stock">) =>
+  product.minStock > 0 && product.stock <= product.minStock;
+
+const isFlavorLowStock = (flavor: Pick<IceCreamFlavor, "minStock" | "stock">) =>
+  flavor.minStock > 0 && flavor.stock <= flavor.minStock;
 
 const allocateExpenseByRevenueShare = (
   totalExpense: number,
@@ -911,24 +2132,43 @@ const allocateExpenseByRevenueShare = (
   return totalExpense * (filteredGross / periodGross);
 };
 
+const calculateCommissionCost = (
+  sales: Sale[],
+  methodCommissions: Record<string, number>,
+  channelCommissions: Record<SaleChannel, number>,
+) =>
+  sales.reduce((total, sale) => {
+    const methodRate = methodCommissions[sale.method] ?? 0;
+    const channelRate = channelCommissions[sale.channel] ?? 0;
+    return total + sale.total * ((methodRate + channelRate) / 100);
+  }, 0);
+
 const getStaffKey = (person: Pick<StaffMember, "id" | "name">) =>
   person.id?.trim() || person.name.trim().toLowerCase();
 
 const getAttendanceKey = (record: Pick<Attendance, "staffId" | "employeeName">) =>
   record.staffId?.trim() || record.employeeName.trim().toLowerCase();
 
-const getCashierStorageKey = (userId?: string) =>
-  `${CASHIER_SESSION_STORAGE_KEY}:${userId ?? "anonimo"}`;
+const getAttendanceDisplayName = (
+  record: Pick<Attendance, "staffId" | "employeeName">,
+  staff: StaffMember[],
+) => {
+  const savedName = record.employeeName.trim();
+  if (savedName) return savedName;
 
-const getCashierSessionKey = (session: CashierSession) =>
-  session.staffId?.trim() || session.employeeName.trim().toLowerCase();
+  const match = record.staffId
+    ? staff.find((person) => person.id === record.staffId)
+    : null;
+
+  return match?.name ?? "Empleado sin nombre";
+};
 
 const inferShiftFromSchedule = (shift: string): ShiftName | null => {
   const normalized = shift.trim().toLowerCase();
 
   if (!normalized) return null;
   if (normalized.includes("tarde")) return "tarde";
-  if (normalized.includes("maÃƒÆ’Ã‚Â±") || normalized.includes("man")) return "manana";
+  if (normalized.includes("mañ") || normalized.includes("man")) return "manana";
 
   const match = normalized.match(/(\d{1,2})\s*:\s*(\d{2})/);
   if (!match) return null;
@@ -998,6 +2238,34 @@ const isAttendanceEvent = (value: string): value is AttendanceEvent =>
 const isShiftName = (value: string): value is ShiftName =>
   ["manana", "tarde"].includes(value);
 
+const isSaleChannel = (value: string): value is SaleChannel =>
+  ["local", "pedidos_ya"].includes(value);
+
+const getSaleChannelLabel = (channel: SaleChannel) =>
+  saleChannelOptions.find((option) => option.id === channel)?.label ?? "Local";
+
+const inferSaleChannel = (sale: Pick<SaleRow, "canal" | "cliente">): SaleChannel => {
+  const channel = sale.canal ?? "";
+  if (isSaleChannel(channel)) {
+    return channel;
+  }
+
+  const customer = (sale.cliente ?? "").trim().toLowerCase();
+  return customer.includes("pedidos ya") || customer.includes("pedidosya")
+    ? "pedidos_ya"
+    : "local";
+};
+
+const normalizeProductImageUrl = (value: string | null) => {
+  const url = value?.trim() ?? "";
+
+  if (!url || url.includes("images.unsplash.com")) {
+    return "";
+  }
+
+  return url;
+};
+
 const mapProduct = (product: ProductRow): Product => ({
   id: product.id,
   name: product.nombre,
@@ -1007,7 +2275,7 @@ const mapProduct = (product: ProductRow): Product => ({
   stock: toNumber(product.stock),
   minStock: toNumber(product.stock_minimo),
   unit: product.unidad,
-  imageUrl: product.imagen ?? "",
+  imageUrl: normalizeProductImageUrl(product.imagen),
   maxFlavors: product.max_gustos ?? 0,
   flavorUsage: toNumber(product.consumo_gustos ?? 0),
 });
@@ -1026,6 +2294,7 @@ const mapFlavor = (flavor: FlavorRow): IceCreamFlavor => ({
 const mapSale = (sale: SaleRow): Sale => ({
   id: sale.id,
   customer: sale.cliente ?? "Mostrador",
+  channel: inferSaleChannel(sale),
   items: sale.productos ?? 0,
   method: sale.metodo ?? "Sin metodo",
   time: sale.hora?.slice(0, 5) ?? "--:--",
@@ -1040,7 +2309,9 @@ const mapSaleItem = (item: SaleItemRow): SaleItem => ({
   saleId: item.venta_id,
   product: item.producto,
   quantity: toNumber(item.cantidad),
+  price: toNumber(item.precio ?? null),
   cost: toNumber(item.costo),
+  total: toNumber(item.total ?? null),
   flavors: item.gustos ?? [],
   createdAt: item.creado ?? new Date().toISOString(),
 });
@@ -1096,6 +2367,17 @@ const mapStaffMember = (person: StaffRow): StaffMember => ({
     person.estado === "Franco"
       ? person.estado
       : "Activo",
+  pin: person.pin_codigo ?? "",
+});
+
+const mapAuditLog = (log: AuditLogRow): AuditLog => ({
+  id: log.id,
+  entity: log.entidad,
+  entityId: log.entidad_id,
+  action: log.accion,
+  detail: log.detalle ?? {},
+  userName: log.usuario_nombre,
+  createdAt: log.creado,
 });
 
 const mapAttendance = (attendance: AttendanceRow): Attendance => ({
@@ -1109,9 +2391,9 @@ const mapAttendance = (attendance: AttendanceRow): Attendance => ({
   recordedAt: attendance.creado,
 });
 
-export function HeladeriaErp() {
+export function GestionLocalErp() {
   const router = useRouter();
-  const [activeView, setActiveView] = useState<ViewId>("caja");
+  const [activeView, setActiveView] = useState<ViewId>("inicio");
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] =
     useState<DeleteConfirmation | null>(null);
@@ -1119,6 +2401,11 @@ export function HeladeriaErp() {
   const [products, setProducts] = useState<Product[]>([]);
   const [iceCreamFlavors, setIceCreamFlavors] = useState<IceCreamFlavor[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  const [paymentMethodCommissions, setPaymentMethodCommissions] = useState<Record<string, number>>({});
+  const [channelCommissions, setChannelCommissions] = useState<Record<SaleChannel, number>>({
+    local: 0,
+    pedidos_ya: 0,
+  });
   const [sales, setSales] = useState<Sale[]>([]);
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -1126,12 +2413,14 @@ export function HeladeriaErp() {
   const [flavorBatches, setFlavorBatches] = useState<FlavorBatch[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [selectedFlavors, setSelectedFlavors] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("Todos");
   const [paymentMethod, setPaymentMethod] = useState("");
+  const [saleChannel, setSaleChannel] = useState<SaleChannel>("local");
   const [customer, setCustomer] = useState("Mostrador");
   const [discountMode, setDiscountMode] = useState<DiscountMode>("amount");
   const [discountValue, setDiscountValue] = useState("");
@@ -1140,11 +2429,17 @@ export function HeladeriaErp() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [isUsersOpen, setIsUsersOpen] = useState(false);
   const [isCharging, setIsCharging] = useState(false);
-  const [currentCashier, setCurrentCashier] = useState<CashierSession | null>(null);
-  const [isCashierPickerOpen, setIsCashierPickerOpen] = useState(false);
   const [isEndingCashierSession, setIsEndingCashierSession] = useState(false);
   const [isCashierActionLoading, setIsCashierActionLoading] = useState(false);
   const [timeTick, setTimeTick] = useState(0);
+  const [themeSettings, setThemeSettings] = useState<ThemeSettings>(
+    defaultThemeSettings,
+  );
+  const [themeDraft, setThemeDraft] = useState<ThemeSettings>(
+    defaultThemeSettings,
+  );
+  const [isSavingTheme, setIsSavingTheme] = useState(false);
+  const [isBooting, setIsBooting] = useState(true);
   const [, setIsSupabaseReady] = useState(false);
   const [, setIsLoadingData] = useState(true);
   const allowedViews = sessionUser
@@ -1152,6 +2447,21 @@ export function HeladeriaErp() {
     : allowedViewsByRole.empleado;
   const visibleNavItems = navItems.filter((item) => allowedViews.includes(item.id));
   const activeHelp = helpContentByView[activeView];
+  const themeStyle = buildThemeStyle(themeSettings);
+
+  const applyThemeSettings = (settings: Partial<ThemeSettings> | null | undefined) => {
+    const normalized = normalizeThemeSettings(settings);
+    setThemeSettings(normalized);
+    setThemeDraft(normalized);
+
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      // El diseño igual queda aplicado en la sesión actual.
+    }
+
+    applyBrowserBrandSettings(normalized);
+  };
 
   const loadData = async (successNotice = "Datos conectados con Supabase") => {
     setIsLoadingData(true);
@@ -1169,10 +2479,21 @@ export function HeladeriaErp() {
 
     const data = (await response.json()) as ErpDataResponse;
     const methods = (data.metodos_pago ?? []).map((item) => item.nombre);
+    const methodCommissions = Object.fromEntries(
+      (data.metodos_pago ?? []).map((item) => [
+        item.nombre,
+        toNumber(item.comision ?? 0),
+      ]),
+    );
 
     setProducts((data.productos ?? []).map(mapProduct));
     setIceCreamFlavors((data.gustos ?? []).map(mapFlavor));
     setPaymentMethods(methods);
+    setPaymentMethodCommissions(methodCommissions);
+    setChannelCommissions({
+      local: toNumber(data.comisiones_canales?.local ?? 0),
+      pedidos_ya: toNumber(data.comisiones_canales?.pedidos_ya ?? 0),
+    });
     setSales((data.ventas ?? []).map(mapSale));
     setSaleItems((data.items_venta ?? []).map(mapSaleItem));
     setExpenses((data.gastos ?? []).map(mapExpense));
@@ -1180,6 +2501,10 @@ export function HeladeriaErp() {
     setFlavorBatches((data.tandas_gustos ?? []).map(mapFlavorBatch));
     setStaff((data.empleados ?? []).map(mapStaffMember));
     setAttendance((data.asistencias ?? []).map(mapAttendance));
+    setAuditLogs((data.auditoria ?? []).map(mapAuditLog));
+    if (data.diseno) {
+      applyThemeSettings(data.diseno);
+    }
     setPaymentMethod((current) =>
       current && methods.includes(current) ? current : methods[0] ?? "",
     );
@@ -1203,9 +2528,83 @@ export function HeladeriaErp() {
     setSessionUser(data);
   };
 
+  const updateThemeDraft = (key: keyof ThemeSettings, value: string) => {
+    const nextTheme = normalizeThemeSettings({
+      ...themeDraft,
+      [key]: value,
+    });
+    setThemeDraft(nextTheme);
+    setThemeSettings(nextTheme);
+  };
+
+  const applyThemePreset = (
+    preset: ThemeColorPreset,
+    options: ApplyThemePresetOptions,
+  ) => {
+    const nextTheme = normalizeThemeSettings({
+      ...themeDraft,
+      ...preset.colors,
+      ...(options.includeTypography ? preset.typography : {}),
+    });
+    setThemeDraft(nextTheme);
+    setThemeSettings(nextTheme);
+  };
+
+  const saveTheme = async (settings = themeDraft) => {
+    const nextTheme = normalizeThemeSettings(settings);
+    setIsSavingTheme(true);
+    applyThemeSettings(nextTheme);
+
+    const response = await fetch("/api/erp/diseno", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ diseno: nextTheme }),
+    }).catch(() => null);
+
+    setIsSavingTheme(false);
+
+    if (!response?.ok) {
+      setNotice("No se pudo guardar el diseño en la base");
+      return false;
+    }
+
+    setNotice("Diseño guardado");
+    return true;
+  };
+
+  const resetTheme = () => {
+    void saveTheme(defaultThemeSettings);
+  };
+
   useEffect(() => {
-    loadData();
-    loadSessionUser();
+    let isMounted = true;
+
+    const boot = async () => {
+      try {
+        const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+        if (savedTheme) {
+          applyThemeSettings(JSON.parse(savedTheme) as Partial<ThemeSettings>);
+        }
+      } catch {
+        applyThemeSettings(defaultThemeSettings);
+      }
+
+      try {
+        await Promise.all([loadData(), loadSessionUser()]);
+      } finally {
+        if (isMounted) {
+          setIsBooting(false);
+        }
+      }
+    };
+
+    void boot();
+
+    return () => {
+      isMounted = false;
+    };
+    // La carga inicial corre una sola vez; loadData tambien se usa despues de guardar cambios.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1219,62 +2618,6 @@ export function HeladeriaErp() {
       setActiveView(allowedViews[0] ?? "caja");
     }
   }, [activeView, allowedViews]);
-
-  useEffect(() => {
-    if (!sessionUser) {
-      setCurrentCashier(null);
-      return;
-    }
-
-    const storageKey = getCashierStorageKey(sessionUser.id);
-    const storedValue = window.localStorage.getItem(storageKey);
-
-    if (!storedValue) {
-      setCurrentCashier(null);
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(storedValue) as CashierSession;
-      setCurrentCashier(parsed);
-    } catch {
-      window.localStorage.removeItem(storageKey);
-      setCurrentCashier(null);
-    }
-  }, [sessionUser]);
-
-  useEffect(() => {
-    if (!sessionUser) return;
-
-    const storageKey = getCashierStorageKey(sessionUser.id);
-    if (!currentCashier) {
-      window.localStorage.removeItem(storageKey);
-      return;
-    }
-
-    window.localStorage.setItem(storageKey, JSON.stringify(currentCashier));
-  }, [currentCashier, sessionUser]);
-
-  useEffect(() => {
-    if (!currentCashier) return;
-
-    const matchingStaff = staff.find(
-      (person) => getStaffKey(person) === getCashierSessionKey(currentCashier),
-    );
-
-    if (!matchingStaff) return;
-
-    if (matchingStaff.name !== currentCashier.employeeName) {
-      setCurrentCashier((current) =>
-        current
-          ? {
-              ...current,
-              employeeName: matchingStaff.name,
-            }
-          : current,
-      );
-    }
-  }, [currentCashier, staff]);
 
   const cartItems = cart;
   const categories = ["Todos", ...new Set(products.map((product) => product.category))];
@@ -1329,9 +2672,14 @@ export function HeladeriaErp() {
   );
   const fixedExpenses = expenseBreakdown.fixed;
   const totalExpenses = fixedExpenses;
-  const netProfit = grossRevenue - soldProductCost - fixedExpenses;
-  const lowStock = products.filter((product) => product.stock <= product.minStock);
-  const lowFlavorStock = iceCreamFlavors.filter((flavor) => flavor.stock <= flavor.minStock);
+  const commissionCost = calculateCommissionCost(
+    sales,
+    paymentMethodCommissions,
+    channelCommissions,
+  );
+  const netProfit = grossRevenue - soldProductCost - fixedExpenses - commissionCost;
+  const lowStock = products.filter(isProductLowStock);
+  const lowFlavorStock = iceCreamFlavors.filter(isFlavorLowStock);
   const unitsInStock = products.reduce((total, product) => total + product.stock, 0);
   const flavorUnitsInStock = iceCreamFlavors.reduce(
     (total, flavor) => total + flavor.stock,
@@ -1341,27 +2689,6 @@ export function HeladeriaErp() {
     () => buildAttendanceStatusMap(staff, attendance, new Date(timeTick)),
     [attendance, staff, timeTick],
   );
-  const currentCashierStaff = useMemo(() => {
-    if (!currentCashier) return null;
-
-    return (
-      staff.find((person) => getStaffKey(person) === getCashierSessionKey(currentCashier)) ??
-      null
-    );
-  }, [currentCashier, staff]);
-  const currentCashierStatus = currentCashierStaff
-    ? attendanceStatusMap.get(getStaffKey(currentCashierStaff)) ?? null
-    : null;
-  const additionalWorkingStaff = useMemo(() => {
-    const cashierKey = currentCashier ? getCashierSessionKey(currentCashier) : null;
-
-    return Array.from(attendanceStatusMap.values()).filter(
-      (status) => status.isWorking && status.key !== cashierKey,
-    );
-  }, [attendanceStatusMap, currentCashier]);
-  const shouldAskForCashier =
-    activeView === "caja" && Boolean(sessionUser) && !currentCashier && staff.length > 0;
-
   const getCartQuantity = (productId: string) =>
     cart
       .filter((item) => item.productId === productId)
@@ -1499,24 +2826,28 @@ export function HeladeriaErp() {
     setDiscountValue("");
     setDiscountMode("amount");
     setIsDiscountOpen(false);
+    setSaleChannel("local");
     setNotice("Pedido cancelado");
   };
 
   const completeSale = async () => {
     if (!cartItems.length || isCharging) return;
     if (!paymentMethod) {
-      setNotice("No hay metodos de pago cargados en la base");
+      setNotice("No hay métodos de pago cargados en la base");
       return;
     }
 
     setIsCharging(true);
 
     const saleTime = getCurrentTime();
+    const saleCustomer =
+      saleChannel === "pedidos_ya" ? "Pedidos Ya" : customer.trim() || "Mostrador";
     const cartSnapshot = cartItems;
     const productsSnapshot = products;
     const newSale: Sale = {
-      id: `HF-${Date.now()}`,
-      customer: customer.trim() || "Mostrador",
+      id: `V-${Date.now()}`,
+      customer: saleCustomer,
+      channel: saleChannel,
       items: cartSnapshot.reduce((total, item) => total + item.quantity, 0),
       method: paymentMethod,
       time: saleTime,
@@ -1559,6 +2890,7 @@ export function HeladeriaErp() {
     const missingFlavorStock = flavorStockUpdates.find((flavor) => !flavor.id);
     if (missingFlavorStock) {
       setNotice(`No se encontro el gusto ${missingFlavorStock.name} en la base`);
+      setIsCharging(false);
       return;
     }
 
@@ -1581,6 +2913,7 @@ export function HeladeriaErp() {
       tipo: "venta",
       cantidad: -quantity,
       nota: `Pedido ${newSale.id}`,
+      usuario_id: sessionUser?.id ?? null,
     }));
 
     try {
@@ -1592,6 +2925,7 @@ export function HeladeriaErp() {
             id: newSale.id,
             sucursal_id: DEFAULT_BRANCH_ID,
             cliente: newSale.customer,
+            canal: newSale.channel,
             productos: newSale.items,
             metodo: newSale.method,
             subtotal: newSale.subtotal,
@@ -1599,17 +2933,20 @@ export function HeladeriaErp() {
             total: newSale.total,
             hora: saleTime,
             estado: "pagada",
+            usuario_id: sessionUser?.id ?? null,
           },
           items: saleItems,
           movimientos: inventoryMovements,
           stock: soldEntries.map(([productId, quantity]) => {
             const product = productsSnapshot.find((item) => item.id === productId);
             return {
+              cantidad: quantity,
               id: productId,
               stock: Math.max(0, (product?.stock ?? 0) - quantity),
             };
           }),
           stock_gustos: flavorStockUpdates.map((flavor) => ({
+            cantidad: flavor.quantity,
             id: flavor.id,
             stock: flavor.stock,
           })),
@@ -1634,6 +2971,7 @@ export function HeladeriaErp() {
       setDiscountValue("");
       setDiscountMode("amount");
       setIsDiscountOpen(false);
+      setSaleChannel("local");
       await loadData(`Pedido ${newSale.id} cobrado por ${formatCurrency(saleTotal)}`);
       setIsSupabaseReady(true);
     } catch {
@@ -1651,7 +2989,7 @@ export function HeladeriaErp() {
       product.id,
     );
     if (!id || !product.name.trim() || !product.category.trim()) {
-      setNotice("CompletÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ nombre y rubro del producto");
+      setNotice("Completá nombre y rubro del producto");
       return false;
     }
 
@@ -1748,7 +3086,7 @@ export function HeladeriaErp() {
 
   const saveEmployee = async (person: StaffForm) => {
     if (!person.name.trim() || !person.role.trim()) {
-      setNotice("CompletÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ nombre y rol del empleado");
+      setNotice("Completá nombre y rol del empleado");
       return false;
     }
 
@@ -1763,6 +3101,7 @@ export function HeladeriaErp() {
         turno: person.shift.trim() || "Sin turno",
         sector: person.area.trim() || "General",
         estado: person.status,
+        pin_codigo: person.pin?.trim() || null,
       }),
     });
 
@@ -1780,7 +3119,7 @@ export function HeladeriaErp() {
 
   const saveFlavor = async (flavor: FlavorForm) => {
     if (!flavor.name.trim()) {
-      setNotice("CompletÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ el nombre del gusto");
+      setNotice("Completá el nombre del gusto");
       return false;
     }
 
@@ -1984,182 +3323,160 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
     return true;
   };
 
-  const handleSelectCashier = async (person: StaffMember) => {
+  const handleCashierLogout = async () => {
     setIsCashierActionLoading(true);
-
-    const status = attendanceStatusMap.get(getStaffKey(person));
-    if (!status?.isWorking) {
-      const saved = await registerAttendance(person, "entrada");
-      if (!saved) {
-        setIsCashierActionLoading(false);
-        return;
-      }
-    }
-
-    setCurrentCashier({
-      staffId: person.id ?? null,
-      employeeName: person.name,
-      assignedAt: new Date().toISOString(),
-    });
-    setIsCashierPickerOpen(false);
-    setNotice(`${person.name} quedo asignado a la caja`);
-    setIsCashierActionLoading(false);
-  };
-
-  const handleCashierLogout = async (markExit: boolean) => {
-    setIsCashierActionLoading(true);
-
-    if (markExit && currentCashierStaff) {
-      const saved = await registerAttendance(currentCashierStaff, "salida");
-      if (!saved) {
-        setIsCashierActionLoading(false);
-        return;
-      }
-    }
-
-    if (sessionUser) {
-      window.localStorage.removeItem(getCashierStorageKey(sessionUser.id));
-    }
 
     const supabase = createClient();
     await supabase.auth.signOut();
-    setCurrentCashier(null);
     setSessionUser(null);
     setIsEndingCashierSession(false);
     setIsCashierActionLoading(false);
     router.push("/auth/login");
   };
 
+  const saveCommissions = async (
+    methods: Record<string, number>,
+    channels: Record<SaleChannel, number>,
+  ) => {
+    const response = await fetch("/api/erp/comisiones", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        canales: channels,
+        metodos: paymentMethods.map((nombre) => ({
+          nombre,
+          comision: methods[nombre] ?? 0,
+        })),
+      }),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setNotice(data?.error ?? "No se pudieron guardar las comisiones");
+      return false;
+    }
+
+    await loadData("Comisiones actualizadas");
+    return true;
+  };
+
+  if (isBooting) {
+    return <InitialLoadingScreen />;
+  }
+
   return (
-    <div className="min-h-screen bg-[#070809] text-zinc-100">
+    <div
+      className="erp-theme min-h-screen bg-[var(--erp-bg)] text-[var(--erp-text)]"
+      style={themeStyle}
+    >
       <div className="mx-auto flex min-h-screen w-full max-w-[1680px]">
-        <aside className="hidden w-72 shrink-0 border-r border-white/10 bg-[#0d0f10] lg:flex lg:flex-col">
-          <div className="border-b border-white/10 p-5">
+        <aside className="hidden w-72 shrink-0 border-r border-[var(--erp-border)] bg-[var(--erp-sidebar)] lg:flex lg:flex-col">
+          <div className="border-b border-[var(--erp-border)] p-5">
             <div className="flex items-center gap-3">
-              <div className="flex size-12 items-center justify-center rounded-lg bg-cyan-300 text-zinc-950">
-                <Snowflake className="size-6" />
-              </div>
+              <BrandLogo theme={themeSettings} />
               <div>
-                <p className="font-semibold leading-tight">Heladeria Facundo&apos;s</p>
+                <p
+                  className="text-2xl leading-tight text-[var(--erp-text)]"
+                  style={{ fontFamily: "var(--erp-brand-font)" }}
+                >
+                  {themeSettings.brandName}
+                </p>
               </div>
             </div>
           </div>
 
-          <nav className="flex flex-1 flex-col gap-2 p-4">
-            {visibleNavItems.map((item) => (
-              <NavButton
-                key={item.id}
-                active={activeView === item.id}
-                item={item}
-                onClick={() => setActiveView(item.id)}
-              />
-            ))}
+          <nav className="flex flex-1 flex-col gap-5 p-4">
+            {navGroups.map((group) => {
+              const groupItems = group.items
+                .map((id) => visibleNavItems.find((item) => item.id === id))
+                .filter((item): item is NavItem => Boolean(item));
+
+              if (!groupItems.length) return null;
+
+              return (
+                <div className="space-y-2" key={group.label}>
+                  <p className="px-3 text-[11px] font-bold uppercase tracking-[0.18em] text-[var(--erp-muted)]">
+                    {group.label}
+                  </p>
+                  <div className="space-y-1">
+                    {groupItems.map((item) => (
+                      <NavButton
+                        key={item.id}
+                        active={activeView === item.id}
+                        item={item}
+                        onClick={() => setActiveView(item.id)}
+                      />
+                    ))}
+                    {group.label === "Sistema" &&
+                      (sessionUser?.role === "admin" ||
+                        sessionUser?.role === "dueno") && (
+                        <button
+                          className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold text-[var(--erp-muted)] transition hover:bg-white/5 hover:text-[var(--erp-text)]"
+                          onClick={() => setIsUsersOpen(true)}
+                          type="button"
+                        >
+                          <Users className="size-4" />
+                          Usuarios
+                        </button>
+                      )}
+                  </div>
+                </div>
+              );
+            })}
           </nav>
 
-          <div className="border-t border-white/10 p-4">
+          <div className="border-t border-[var(--erp-border)] p-4">
             <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
                 <CheckCircle2 className="size-4" />
                 Caja operativa
               </div>
-              <p className="mt-1 text-xs text-zinc-400">
-                MaÃƒÆ’Ã‚Â±ana y tarde separados en mÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©tricas
-              </p>
             </div>
           </div>
         </aside>
 
         <main className="min-w-0 flex-1">
-          <header className="sticky top-0 z-20 border-b border-white/10 bg-[#090b0d]/95 px-4 py-4 backdrop-blur md:px-6">
+          <header className="sticky top-0 z-20 border-b border-[var(--erp-border)] bg-[var(--erp-header)] px-4 py-4 backdrop-blur md:px-6">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">
-                  Heladeria / Cafeteria
+                  {themeSettings.brandSubtitle}
                 </p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-normal md:text-3xl">
-                  Heladeria Facundo&apos;s
+                <h1
+                  className="mt-1 text-4xl leading-none tracking-normal text-[var(--erp-text)] md:text-5xl"
+                  style={{ fontFamily: "var(--erp-brand-font)" }}
+                >
+                  {themeSettings.brandName}
                 </h1>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {currentCashier && (
-                  <>
-                    <Badge className="border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-cyan-100 hover:bg-cyan-300/10">
-                      Caja: {currentCashier.employeeName}
-                    </Badge>
-                    {additionalWorkingStaff.length > 0 && (
-                      <Badge className="border-emerald-300/20 bg-emerald-300/10 px-3 py-2 text-emerald-100 hover:bg-emerald-300/10">
-                        Trabajando:{" "}
-                        {additionalWorkingStaff.length === 1
-                          ? additionalWorkingStaff[0]?.employeeName
-                          : `${additionalWorkingStaff[0]?.employeeName} + ${
-                              additionalWorkingStaff.length - 1
-                            }`}
-                      </Badge>
-                    )}
-                    {currentCashierStatus &&
-                      currentCashierStatus.alert !== "none" && (
-                      <Badge
-                        className={cn(
-                          "px-3 py-2 hover:bg-inherit",
-                          currentCashierStatus.alert === "over"
-                            ? "border-rose-300/30 bg-rose-300/10 text-rose-100"
-                            : "border-amber-300/30 bg-amber-300/10 text-amber-100",
-                        )}
-                      >
-                        <TriangleAlert className="mr-1 size-4" />
-                        {currentCashierStatus.alert === "over"
-                          ? "Ya cumplio 8 horas"
-                          : "Le falta poco para las 8 horas"}
-                      </Badge>
-                    )}
-                  </>
-                )}
-                {(sessionUser?.role === "admin" ||
-                  sessionUser?.role === "dueno") && (
-                  <Button
-                    className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                    onClick={() => setIsUsersOpen(true)}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <Users className="size-4" />
-                    Usuarios
-                  </Button>
-                )}
-                {sessionUser && (
-                  <Button
-                    className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                    onClick={() => setIsCashierPickerOpen(true)}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    {currentCashier ? "Cambiar empleado" : "Elegir empleado"}
-                  </Button>
-                )}
-                <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                  onClick={() => setIsHelpOpen(true)}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  <CircleHelp className="size-4" />
-                  Ayuda
-                </Button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {sessionUser ? (
-                  <Button
-                    className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                    onClick={() => setIsEndingCashierSession(true)}
-                    size="sm"
-                    type="button"
-                    variant="outline"
-                  >
-                    <LogOut className="size-4" />
-                    Salir de caja
-                  </Button>
+                  <>
+                    <Button
+                      className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                      onClick={() => setIsHelpOpen(true)}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <CircleHelp className="size-4" />
+                      Ayuda
+                    </Button>
+
+                    <Button
+                      className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                      onClick={() => setIsEndingCashierSession(true)}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      <LogOut className="size-4" />
+                      Salir de caja
+                    </Button>
+                  </>
                 ) : (
                   <Button
                     asChild
@@ -2167,7 +3484,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                     size="sm"
                     variant="outline"
                   >
-                    <Link href="/auth/login">Iniciar sesiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n</Link>
+                    <Link href="/auth/login">Iniciar sesión</Link>
                   </Button>
                 )}
               </div>
@@ -2208,6 +3525,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                 query={query}
                 removeFromCart={removeFromCart}
                 removeSelectedFlavor={removeSelectedFlavor}
+                saleChannel={saleChannel}
                 discountMode={discountMode}
                 discountValue={discountValue}
                 isDiscountOpen={isDiscountOpen}
@@ -2222,8 +3540,23 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                 setIsDiscountOpen={setIsDiscountOpen}
                 setPaymentMethod={setPaymentMethod}
                 setQuery={setQuery}
+                setSaleChannel={setSaleChannel}
                 setSelectedProduct={setSelectedProduct}
                 toggleFlavor={toggleFlavor}
+              />
+            )}
+
+            {activeView === "inicio" && (
+              <InicioView
+                attendanceStatusMap={attendanceStatusMap}
+                commissionCost={commissionCost}
+                fixedExpenses={fixedExpenses}
+                lowFlavorStock={lowFlavorStock}
+                lowStock={lowStock}
+                netProfit={netProfit}
+                sales={sales}
+                sessionUser={sessionUser}
+                soldProductCost={soldProductCost}
               />
             )}
 
@@ -2233,8 +3566,10 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
 
             {activeView === "analisis" && (
               <AnalisisView
+                channelCommissions={channelCommissions}
                 expenses={expenses}
                 expenseHistory={expenseHistory}
+                paymentMethodCommissions={paymentMethodCommissions}
                 paymentMethods={paymentMethods}
                 saleItems={saleItems}
                 sales={sales}
@@ -2243,8 +3578,10 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
 
             {activeView === "historial" && (
               <HistorialView
+                channelCommissions={channelCommissions}
                 expenses={expenses}
                 expenseHistory={expenseHistory}
+                paymentMethodCommissions={paymentMethodCommissions}
                 saleItems={saleItems}
                 sales={sales}
               />
@@ -2255,7 +3592,12 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                 expenses={expenses}
                 fixedExpenses={fixedExpenses}
                 grossRevenue={grossRevenue}
+                commissionCost={commissionCost}
+                channelCommissions={channelCommissions}
                 netProfit={netProfit}
+                paymentMethodCommissions={paymentMethodCommissions}
+                paymentMethods={paymentMethods}
+                saveCommissions={saveCommissions}
                 saveExpenses={saveExpenses}
                 soldProductCost={soldProductCost}
                 totalExpenses={totalExpenses}
@@ -2267,7 +3609,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               <EmpleadosView
                 attendance={attendance}
                 attendanceStatusMap={attendanceStatusMap}
-                currentCashierName={currentCashier?.employeeName ?? null}
+                currentCashierName={null}
                 registerAttendance={registerAttendance}
                 staff={staff}
               />
@@ -2284,6 +3626,9 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
 
             {activeView === "stock" && (
               <StockView
+                canManageStock={
+                  sessionUser?.role === "admin" || sessionUser?.role === "dueno"
+                }
                 closeFlavorBatch={closeFlavorBatch}
                 deleteFlavor={deleteFlavor}
                 deleteProduct={deleteProduct}
@@ -2298,6 +3643,21 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                 saveFlavor={saveFlavor}
                 unitsInStock={unitsInStock}
               />
+            )}
+
+            {activeView === "diseno" && sessionUser?.role === "admin" && (
+              <DisenoView
+                isSaving={isSavingTheme}
+                onApplyPreset={applyThemePreset}
+                onReset={resetTheme}
+                onSave={() => saveTheme()}
+                onUpdate={updateThemeDraft}
+                theme={themeDraft}
+              />
+            )}
+
+            {activeView === "auditoria" && (
+              <AuditoriaView auditLogs={auditLogs} />
             )}
           </section>
 
@@ -2317,61 +3677,39 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               }
             }}
             onConfirm={confirmDelete}
-            title={deleteConfirmation?.title ?? "Confirmar eliminacion"}
+            title={deleteConfirmation?.title ?? "Confirmar eliminación"}
           />
           <UserAdminModal
             isOpen={isUsersOpen}
             onClose={() => setIsUsersOpen(false)}
           />
-          <CashierSelectionModal
-            attendanceStatusMap={attendanceStatusMap}
-            canSkip={Boolean(currentCashier) || sessionUser?.role !== "empleado"}
-            currentCashierName={currentCashier?.employeeName ?? null}
-            isLoading={isCashierActionLoading}
-            isOpen={shouldAskForCashier || isCashierPickerOpen}
-            onClose={() => {
-              if (isCashierActionLoading) {
-                return;
-              }
-
-              if (shouldAskForCashier) {
-                setIsCashierPickerOpen(false);
-                setActiveView(
-                  visibleNavItems.find((item) => item.id !== "caja")?.id ?? "stock",
-                );
-                return;
-              }
-
-              setIsCashierPickerOpen(false);
-            }}
-            onConfirm={handleSelectCashier}
-            onSkip={() => {
-              setIsCashierPickerOpen(false);
-              if (activeView === "caja" && !currentCashier) {
-                setActiveView(visibleNavItems.find((item) => item.id !== "caja")?.id ?? "stock");
-              }
-            }}
-            staff={staff}
-          />
           <CashierExitModal
-            cashierName={currentCashier?.employeeName ?? null}
             isLoading={isCashierActionLoading}
             isOpen={isEndingCashierSession}
-            isWorking={Boolean(currentCashierStatus?.isWorking)}
             onClose={() => {
               if (!isCashierActionLoading) {
                 setIsEndingCashierSession(false);
               }
             }}
-            onCloseOnly={() => handleCashierLogout(false)}
-            onEndShift={() => handleCashierLogout(true)}
-            workedLabel={
-              currentCashierStatus?.isWorking
-                ? formatWorkedDuration(currentCashierStatus.workedMinutes)
-                : null
-            }
+            onConfirm={handleCashierLogout}
           />
         </main>
+      </div>
+    </div>
+  );
+}
+
+function InitialLoadingScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#070809] text-zinc-100">
+      <div className="flex flex-col items-center gap-4">
+        <div className="size-12 animate-spin rounded-full border-2 border-white/10 border-t-cyan-300" />
+        <div className="text-center">
+          <p className="font-semibold">Cargando sistema</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Preparando configuración y datos
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -2395,9 +3733,9 @@ function NavButton({
       className={cn(
         "flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold transition",
         active
-          ? "bg-cyan-300 text-zinc-950 shadow-[0_0_24px_rgba(103,232,249,0.18)]"
-          : "text-zinc-400 hover:bg-white/5 hover:text-zinc-100",
-        compact && "shrink-0 border border-white/10 bg-[#111417]",
+          ? "bg-[var(--erp-primary)] text-[var(--erp-primary-text)] shadow-[0_0_24px_var(--erp-primary-soft)]"
+          : "text-[var(--erp-muted)] hover:bg-white/5 hover:text-[var(--erp-text)]",
+        compact && "shrink-0 border border-[var(--erp-border)] bg-[var(--erp-panel-alt)]",
       )}
       onClick={onClick}
       type="button"
@@ -2408,7 +3746,7 @@ function NavButton({
   );
 }
 
-function CashierSelectionModal({
+export function CashierSelectionModal({
   attendanceStatusMap,
   canSkip,
   currentCashierName,
@@ -2466,12 +3804,11 @@ function CashierSelectionModal({
         <div className="border-b border-white/10 px-5 py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-lg font-semibold text-zinc-100">
-                QuiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©n estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ usando la caja
+              <p className="text-lg font-semibold text-zinc-100">Quién está usando la caja
               </p>
               <p className="mt-1 text-sm text-zinc-400">
                 Elegi el empleado que queda a cargo. Si no tenia entrada abierta,
-                se marca automaticamente.
+                se marca automáticamente.
               </p>
             </div>
             {!isLoading && canSkip && (
@@ -2511,7 +3848,7 @@ function CashierSelectionModal({
                   className={cn(
                     "rounded-xl border p-4 text-left transition",
                     isSelected
-                      ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_0_1px_rgba(103,232,249,0.25)]"
+                      ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_0_1px_var(--erp-primary-border)]"
                       : "border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/5",
                   )}
                   key={person.id ?? person.name}
@@ -2560,7 +3897,7 @@ function CashierSelectionModal({
 
           {filteredStaff.length === 0 && (
             <div className="rounded-xl border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-zinc-500">
-              No encontramos empleados con esa busqueda.
+              No encontramos empleados con esa búsqueda.
             </div>
           )}
         </div>
@@ -2599,23 +3936,15 @@ function CashierSelectionModal({
 }
 
 function CashierExitModal({
-  cashierName,
   isLoading,
   isOpen,
-  isWorking,
   onClose,
-  onCloseOnly,
-  onEndShift,
-  workedLabel,
+  onConfirm,
 }: {
-  cashierName: string | null;
   isLoading: boolean;
   isOpen: boolean;
-  isWorking: boolean;
   onClose: () => void;
-  onCloseOnly: () => void;
-  onEndShift: () => void;
-  workedLabel: string | null;
+  onConfirm: () => void;
 }) {
   if (!isOpen) return null;
 
@@ -2623,50 +3952,19 @@ function CashierExitModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0d0f10] shadow-2xl">
         <div className="border-b border-white/10 px-5 py-4">
-          <p className="text-lg font-semibold text-zinc-100">Salir de caja</p>
+          <p className="text-lg font-semibold text-zinc-100">Cerrar sesion</p>
           <p className="mt-1 text-sm text-zinc-400">
-            {cashierName
-              ? `${cashierName} esta usando la caja ahora.`
-              : "Se va a cerrar la sesiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n actual."}
+            Se va a cerrar la cuenta actual en esta computadora.
           </p>
         </div>
 
-        <div className="space-y-3 p-5">
-          {isWorking && workedLabel && (
-            <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">
-              Jornada abierta hace {workedLabel}. Si el turno termino, conviene
-              marcar la salida ahora.
-            </div>
-          )}
-
-          <div className="grid gap-3">
-            <button
-              className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 text-left transition hover:border-white/20 hover:bg-white/5"
-              disabled={isLoading}
-              onClick={onCloseOnly}
-              type="button"
-            >
-              <p className="font-semibold text-zinc-100">Solo cerrar caja</p>
-              <p className="mt-1 text-sm text-zinc-500">
-                Cierra la sesiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n, pero deja la jornada laboral como estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡.
-              </p>
-            </button>
-
-            <button
-              className="rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-4 text-left transition hover:border-amber-300/30 hover:bg-amber-300/15"
-              disabled={isLoading}
-              onClick={onEndShift}
-              type="button"
-            >
-              <p className="font-semibold text-amber-100">Turno terminado</p>
-              <p className="mt-1 text-sm text-amber-100/80">
-                Marca la salida del empleado y despuÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s cierra la sesiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³n.
-              </p>
-            </button>
+        <div className="p-5">
+          <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">
+            Las entradas y salidas de empleados se manejan desde la seccion Empleados.
           </div>
         </div>
 
-        <div className="flex justify-end border-t border-white/10 px-5 py-4">
+        <div className="flex justify-end gap-2 border-t border-white/10 px-5 py-4">
           <Button
             className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
             disabled={isLoading}
@@ -2675,6 +3973,14 @@ function CashierExitModal({
             variant="outline"
           >
             Cancelar
+          </Button>
+          <Button
+            className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+            disabled={isLoading}
+            onClick={onConfirm}
+            type="button"
+          >
+            Cerrar sesion
           </Button>
         </div>
       </div>
@@ -2686,23 +3992,25 @@ function PaginationControls({
   currentPage,
   label,
   onPageChange,
+  pageSize = PAGE_SIZE,
   totalItems,
 }: {
   currentPage: number;
   label: string;
   onPageChange: (page: number) => void;
+  pageSize?: number;
   totalItems: number;
 }) {
-  const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-  if (totalItems <= PAGE_SIZE) {
+  if (totalItems <= pageSize) {
     return null;
   }
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-4 py-3">
       <p className="text-sm text-zinc-500">
-        {label} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ Pagina {currentPage} de {totalPages}
+        {label} • Página {currentPage} de {totalPages}
       </p>
       <div className="flex gap-2">
         <Button
@@ -2744,6 +4052,41 @@ function StatusBadge({ label, tone }: { label: string; tone: "cyan" | "amber" | 
   );
 }
 
+function CompactFilterGroup<T extends string>({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string;
+  onChange: (value: T) => void;
+  options: Array<{ id: T; label: string }>;
+  value: T;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+      <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
+        {label}
+      </span>
+      {options.map((option) => (
+        <button
+          className={cn(
+            "rounded-md border px-3 py-1.5 text-xs font-semibold transition",
+            value === option.id
+              ? "border-cyan-300 bg-cyan-300 text-zinc-950"
+              : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
+          )}
+          key={option.id}
+          onClick={() => onChange(option.id)}
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function CajaView({
   cartItems,
   category,
@@ -2767,6 +4110,7 @@ function CajaView({
   query,
   removeFromCart,
   removeSelectedFlavor,
+  saleChannel,
   saleDiscount,
   saleSubtotal,
   saleTotal,
@@ -2778,6 +4122,7 @@ function CajaView({
   setIsDiscountOpen,
   setPaymentMethod,
   setQuery,
+  setSaleChannel,
   setSelectedProduct,
   toggleFlavor,
 }: {
@@ -2803,6 +4148,7 @@ function CajaView({
   query: string;
   removeFromCart: (id: string) => void;
   removeSelectedFlavor: (index: number) => void;
+  saleChannel: SaleChannel;
   saleDiscount: number;
   saleSubtotal: number;
   saleTotal: number;
@@ -2814,6 +4160,7 @@ function CajaView({
   setIsDiscountOpen: (open: boolean) => void;
   setPaymentMethod: (method: string) => void;
   setQuery: (query: string) => void;
+  setSaleChannel: (channel: SaleChannel) => void;
   setSelectedProduct: (product: Product | null) => void;
   toggleFlavor: (flavorName: string) => void;
 }) {
@@ -2842,7 +4189,7 @@ function CajaView({
     }),
   );
   const displayedProducts = showLowStockOnly
-    ? filteredProducts.filter((product) => product.stock <= product.minStock)
+    ? filteredProducts.filter(isProductLowStock)
     : filteredProducts;
   const displayedLowFlavors = lowFlavorStock
     .filter((flavor) => {
@@ -2880,7 +4227,6 @@ function CajaView({
                       : item === "Promo"
                         ? BadgeDollarSign
                         : Package,
-      subtitle: "Abrir categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a",
     }));
 
   useEffect(() => {
@@ -2888,12 +4234,12 @@ function CajaView({
   }, [selectedProduct]);
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[1fr_390px]">
+    <div className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-[1fr_390px]">
       <DarkPanel className="overflow-hidden">
         <PanelHeader
           icon={ShoppingCart}
           title="Caja"
-          subtitle="ElegÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ una categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a y despuÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s el producto"
           right={
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -2926,10 +4272,7 @@ function CajaView({
         {showCategoryBrowser ? (
           <div className="space-y-4 p-4">
             <div>
-              <p className="font-semibold text-zinc-100">CategorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­as</p>
-              <p className="mt-1 text-sm text-zinc-500">
-                TocÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ una categorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a para ver sus productos.
-              </p>
+              <p className="font-semibold text-zinc-100">Categorías</p>
             </div>
 
             {(lowStock.length > 0 || lowFlavorStock.length > 0) && (
@@ -2942,7 +4285,7 @@ function CajaView({
                     <p className="mt-1 text-sm text-amber-50/80">
                       {lowStock.length} producto{lowStock.length === 1 ? "" : "s"} y{" "}
                       {lowFlavorStock.length} gusto
-                      {lowFlavorStock.length === 1 ? "" : "s"} estan en bajo stock.
+                      {lowFlavorStock.length === 1 ? "" : "s"} están en bajo stock.
                     </p>
                   </div>
                   <Button
@@ -2986,7 +4329,6 @@ function CajaView({
                 </div>
                 <div>
                   <p className="text-base font-semibold">{item.label}</p>
-                  <p className="mt-1 text-sm text-zinc-500">{item.subtitle}</p>
                 </div>
               </button>
             )})}
@@ -3060,8 +4402,8 @@ function CajaView({
                     </p>
                     <p className="mt-1 text-sm text-zinc-500">
                       {showLowStockOnly && lowStockView === "gustos"
-                        ? `${lowFlavorStock.length} gusto${lowFlavorStock.length === 1 ? "" : "s"} estan en o por debajo del minimo.`
-                        : `${lowStock.length} producto${lowStock.length === 1 ? "" : "s"} estan en o por debajo del minimo.`}
+                        ? `${lowFlavorStock.length} gusto${lowFlavorStock.length === 1 ? "" : "s"} están en o por debajo del mínimo.`
+                        : `${lowStock.length} producto${lowStock.length === 1 ? "" : "s"} están en o por debajo del mínimo.`}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -3104,7 +4446,7 @@ function CajaView({
                 const quantityInCart = cartQuantityByProduct[product.id] ?? 0;
                 const reachedLimit = quantityInCart >= product.stock;
                 const unavailable = product.stock <= 0 || reachedLimit;
-                const isLow = product.stock <= product.minStock;
+                const isLow = isProductLowStock(product);
 
                 return (
                   <button
@@ -3123,23 +4465,21 @@ function CajaView({
                   >
                     <div className="relative aspect-[4/3] bg-black">
                       {product.imageUrl ? (
-                        <img
-                          alt={product.name}
-                          className="size-full object-cover transition duration-300 group-hover:scale-105"
-                          src={product.imageUrl}
+                        <div
+                          aria-label={product.name}
+                          className="size-full bg-cover bg-center transition duration-300 group-hover:scale-105"
+                          role="img"
+                          style={{ backgroundImage: `url("${product.imageUrl}")` }}
                         />
                       ) : (
                         <div className="flex size-full items-center justify-center bg-[#0f1213] text-zinc-500">
-                          <div className="flex flex-col items-center gap-2">
-                            <Package className="size-8" />
-                            <span className="text-sm font-semibold">Sin foto</span>
-                          </div>
+                          <Package className="size-9" />
                         </div>
                       )}
                       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3">
                         <Badge className="border-white/10 bg-black/50 text-zinc-100 hover:bg-black/50">
                           {reachedLimit
-                            ? "Limite en carrito"
+                            ? "Límite en carrito"
                             : isLow
                               ? "Bajo stock"
                             : product.maxFlavors > 0
@@ -3209,7 +4549,7 @@ function CajaView({
                         </p>
                       </div>
                       <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-3">
-                        <p className="text-xs uppercase text-zinc-500">Minimo</p>
+                        <p className="text-xs uppercase text-zinc-500">Mínimo</p>
                         <p className="mt-2 text-2xl font-semibold leading-none text-zinc-100">
                           {flavor.minStock}
                         </p>
@@ -3243,17 +4583,15 @@ function CajaView({
               <div className="grid md:grid-cols-[260px_1fr]">
                 <div className="relative min-h-56 bg-black">
                   {selectedProduct.imageUrl ? (
-                    <img
-                      alt={selectedProduct.name}
-                      className="absolute inset-0 size-full object-cover"
-                      src={selectedProduct.imageUrl}
+                    <div
+                      aria-label={selectedProduct.name}
+                      className="absolute inset-0 size-full bg-cover bg-center"
+                      role="img"
+                      style={{ backgroundImage: `url("${selectedProduct.imageUrl}")` }}
                     />
                   ) : (
                     <div className="absolute inset-0 flex items-center justify-center bg-[#0f1213] text-zinc-500">
-                      <div className="flex flex-col items-center gap-2">
-                        <Package className="size-10" />
-                        <span className="text-sm font-semibold">Sin foto</span>
-                      </div>
+                      <Package className="size-12" />
                     </div>
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
@@ -3267,7 +4605,7 @@ function CajaView({
                   <div className="absolute bottom-4 left-4 right-4">
                     <p className="text-xl font-semibold">{selectedProduct.name}</p>
                     <p className="mt-1 text-sm text-zinc-300">
-                      ElegÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­ {selectedProduct.maxFlavors} gusto
+                      Elegí {selectedProduct.maxFlavors} gusto
                       {selectedProduct.maxFlavors > 1 ? "s" : ""}
                     </p>
                   </div>
@@ -3280,7 +4618,7 @@ function CajaView({
                     </div>
                   )}
                   <div className="mb-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                    Si el stock estimado de un gusto llega a cero, igual podÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s vender y el sistema lo deja en negativo para recalibrar la prÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³xima tanda.
+                    Si el stock estimado de un gusto llega a cero, igual podés vender y el sistema lo deja en negativo para recalibrar la próxima tanda.
                   </div>
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div>
@@ -3299,7 +4637,7 @@ function CajaView({
                     <input
                       className="h-11 w-full rounded-lg border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
                       onChange={(event) => setFlavorSearch(event.target.value)}
-                      placeholder="Buscar sabor rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido"
+                      placeholder="Buscar sabor rápido"
                       value={flavorSearch}
                     />
                   </div>
@@ -3320,7 +4658,7 @@ function CajaView({
                       </div>
                     ) : (
                       <p className="px-1 py-1.5 text-xs text-zinc-500">
-                        TocÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ los gustos. PodÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©s repetir el mismo sabor.
+                        Tocá los gustos. Podés repetir el mismo sabor.
                       </p>
                     )}
                   </div>
@@ -3391,7 +4729,7 @@ function CajaView({
                     ))}
                     {!visibleFlavorGroups.length && (
                       <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-center text-sm text-zinc-500">
-                        No hay gustos que coincidan con esa busqueda.
+                        No hay gustos que coincidan con esa búsqueda.
                       </div>
                     )}
                   </div>
@@ -3426,7 +4764,7 @@ function CajaView({
           <PanelHeader
             icon={ReceiptText}
             title="Pedido"
-            subtitle={`${cartItems.length} lineas`}
+            subtitle={`${cartItems.length} líneas`}
           />
           <div className="min-h-72 divide-y divide-white/10">
             {cartItems.length ? (
@@ -3434,10 +4772,11 @@ function CajaView({
                 <div className="p-3" key={item.lineId}>
                   <div className="flex gap-3">
                     {item.imageUrl ? (
-                      <img
-                        alt={item.name}
-                        className="size-16 rounded-lg object-cover"
-                        src={item.imageUrl}
+                      <div
+                        aria-label={item.name}
+                        className="size-16 shrink-0 rounded-lg bg-cover bg-center"
+                        role="img"
+                        style={{ backgroundImage: `url("${item.imageUrl}")` }}
                       />
                     ) : (
                       <div className="flex size-16 items-center justify-center rounded-lg bg-white/5 text-zinc-500">
@@ -3491,14 +4830,33 @@ function CajaView({
               <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
                 <ShoppingCart className="mb-3 size-8 text-zinc-600" />
                 <p className="font-semibold text-zinc-200">Pedido vacio</p>
-                <p className="text-xs text-zinc-500">
-                  Toca una imagen para agregar productos.
-                </p>
               </div>
             )}
           </div>
 
           <div className="space-y-3 border-t border-white/10 p-4">
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <p className="text-xs font-semibold uppercase text-zinc-500">
+                Canal de venta
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                {saleChannelOptions.map((option) => (
+                  <button
+                    className={cn(
+                      "rounded-lg border px-3 py-2 text-xs font-semibold transition",
+                      saleChannel === option.id
+                        ? "border-cyan-300 bg-cyan-300 text-zinc-950"
+                        : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
+                    )}
+                    key={option.id}
+                    onClick={() => setSaleChannel(option.id)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-2">
               {paymentMethods.map((method) => (
                 <button
@@ -3520,9 +4878,6 @@ function CajaView({
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-semibold text-zinc-100">Descuento</p>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    Aplicalo al pedido antes de cobrar
-                  </p>
                 </div>
                 <Button
                   className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
@@ -3625,6 +4980,7 @@ function CajaView({
         </DarkPanel>
       </div>
     </div>
+    </div>
   );
 }
 
@@ -3638,13 +4994,21 @@ function HistorialVentasView({
   const pageSize = 10;
   const [page, setPage] = useState(0);
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
+  const [shiftFilter, setShiftFilter] = useState<ShiftFilter>("todo");
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("todo");
   const salesByNewest = useMemo(
     () =>
-      [...sales].sort(
-        (left, right) =>
-          new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
-      ),
-    [sales],
+      [...sales]
+        .filter(
+          (sale) =>
+            saleMatchesShiftFilter(sale, shiftFilter) &&
+            saleMatchesChannelFilter(sale, channelFilter),
+        )
+        .sort(
+          (left, right) =>
+            new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+        ),
+    [channelFilter, sales, shiftFilter],
   );
   const saleItemsBySaleId = useMemo(() => {
     return saleItems.reduce<Record<string, SaleItem[]>>((acc, item) => {
@@ -3672,12 +5036,17 @@ function HistorialVentasView({
     setExpandedSaleId(null);
   }, [safePage]);
 
+  useEffect(() => {
+    setPage(0);
+    setExpandedSaleId(null);
+  }, [channelFilter, shiftFilter]);
+
   return (
-    <DarkPanel>
+    <div className="space-y-5">
+      <DarkPanel>
       <PanelHeader
         icon={ReceiptText}
         title="Historial de ventas"
-        subtitle={`${salesByNewest.length} venta${salesByNewest.length === 1 ? "" : "s"} registradas`}
         right={
           <div className="flex items-center gap-2">
             <Button
@@ -3688,7 +5057,7 @@ function HistorialVentasView({
               type="button"
               variant="outline"
             >
-              Mas recientes
+              Más recientes
             </Button>
             <Button
               className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
@@ -3706,8 +5075,22 @@ function HistorialVentasView({
         }
       />
       <div className="space-y-3 p-4">
+        <div className="flex flex-wrap gap-2">
+          <CompactFilterGroup
+            label="Turno"
+            onChange={setShiftFilter}
+            options={shiftFilterOptions}
+            value={shiftFilter}
+          />
+          <CompactFilterGroup
+            label="Canal"
+            onChange={setChannelFilter}
+            options={channelFilterOptions}
+            value={channelFilter}
+          />
+        </div>
         <div className="text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
-          Pagina {safePage + 1} de {totalPages}
+          Página {safePage + 1} de {totalPages}
         </div>
 
         {paginatedSales.length ? (
@@ -3750,10 +5133,14 @@ function HistorialVentasView({
                           </p>
                         )}
                         <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
+                          <StatusBadge
+                            label={getSaleChannelLabel(sale.channel)}
+                            tone={sale.channel === "pedidos_ya" ? "amber" : "cyan"}
+                          />
                           <span>{formatFullDateTime(sale.createdAt)}</span>
-                          <span>ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢</span>
+                          <span>•</span>
                           <span>{sale.customer}</span>
-                          <span>ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢</span>
+                          <span>•</span>
                           <span>{sale.method}</span>
                         </div>
                       </div>
@@ -3770,7 +5157,7 @@ function HistorialVentasView({
 
                   {isExpanded && (
                     <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
-                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                           <p className="text-xs uppercase text-zinc-500">Cliente</p>
                           <p className="mt-2 font-semibold text-zinc-100">
@@ -3778,7 +5165,13 @@ function HistorialVentasView({
                           </p>
                         </div>
                         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                          <p className="text-xs uppercase text-zinc-500">Metodo</p>
+                          <p className="text-xs uppercase text-zinc-500">Canal</p>
+                          <p className="mt-2 font-semibold text-zinc-100">
+                            {getSaleChannelLabel(sale.channel)}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                          <p className="text-xs uppercase text-zinc-500">Método</p>
                           <p className="mt-2 font-semibold text-zinc-100">
                             {sale.method}
                           </p>
@@ -3852,90 +5245,436 @@ function HistorialVentasView({
           </div>
         ) : (
           <div className="rounded-lg border border-white/10 bg-black/20 p-5 text-center text-sm text-zinc-500">
-                TodavÃƒÆ’Ã‚Â­a no hay ventas guardadas.
+                Todavía no hay ventas guardadas.
           </div>
         )}
       </div>
-    </DarkPanel>
+      </DarkPanel>
+    </div>
+  );
+}
+
+function InicioView({
+  attendanceStatusMap,
+  commissionCost,
+  fixedExpenses,
+  lowFlavorStock,
+  lowStock,
+  netProfit,
+  sales,
+  sessionUser,
+  soldProductCost,
+}: {
+  attendanceStatusMap: Map<string, AttendanceStatus>;
+  commissionCost: number;
+  fixedExpenses: number;
+  lowFlavorStock: IceCreamFlavor[];
+  lowStock: Product[];
+  netProfit: number;
+  sales: Sale[];
+  sessionUser: SessionUser | null;
+  soldProductCost: number;
+}) {
+  const todayStart = startOfDay(new Date());
+  const todayEnd = endOfDay(new Date());
+  const currentShift = getCurrentShift();
+  const [cashCount, setCashCount] = useState("");
+  const [cashNote, setCashNote] = useState("");
+  const [isSavingClose, setIsSavingClose] = useState(false);
+  const [closeMessage, setCloseMessage] = useState("");
+  const [lastClose, setLastClose] = useState<CashCloseRow | null>(null);
+  const canSeeFinancials = sessionUser?.role === "admin" || sessionUser?.role === "dueno";
+  const todaySales = sales.filter((sale) => {
+    const date = new Date(sale.createdAt);
+    return date >= todayStart && date <= todayEnd;
+  });
+  const shiftSales = todaySales.filter((sale) =>
+    saleMatchesShiftFilter(sale, currentShift),
+  );
+  const todayRevenue = todaySales.reduce((total, sale) => total + sale.total, 0);
+  const shiftRevenue = shiftSales.reduce((total, sale) => total + sale.total, 0);
+  const shiftCash = shiftSales
+    .filter((sale) => sale.method.toLowerCase() === "efectivo")
+    .reduce((total, sale) => total + sale.total, 0);
+  const countedCash = Math.max(0, Number(cashCount || 0));
+  const cashDifference = countedCash - shiftCash;
+  const workingStatuses = Array.from(attendanceStatusMap.values()).filter(
+    (status) => status.isWorking,
+  );
+  const alertStatuses = workingStatuses.filter((status) => status.alert !== "none");
+
+  const loadLastClose = async () => {
+    const response = await fetch("/api/erp/cierres-caja").catch(() => null);
+    if (!response?.ok) return;
+
+    const data = (await response.json().catch(() => null)) as {
+      cierre?: CashCloseRow | null;
+    } | null;
+    setLastClose(data?.cierre ?? null);
+  };
+
+  useEffect(() => {
+    void loadLastClose();
+  }, []);
+
+  const saveCashClose = async () => {
+    setIsSavingClose(true);
+    setCloseMessage("");
+
+    const now = new Date();
+    const nowParts = getArgentinaDateParts(now);
+    const operationalDate =
+      nowParts.hour < SHIFT_DAY_START_HOUR
+        ? addArgentinaDays(startOfDay(now), -1)
+        : startOfDay(now);
+    const parts = getArgentinaDateParts(operationalDate);
+    const response = await fetch("/api/erp/cierres-caja", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fecha_operativa: `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`,
+        turno: currentShift,
+        total_sistema: shiftRevenue,
+        efectivo_sistema: shiftCash,
+        efectivo_contado: countedCash,
+        ventas: shiftSales.length,
+        observacion: cashNote,
+      }),
+    }).catch(() => null);
+
+    setIsSavingClose(false);
+
+    if (!response?.ok) {
+      setCloseMessage("No se pudo guardar el cierre");
+      return;
+    }
+
+    const data = (await response.json().catch(() => null)) as {
+      cierre?: CashCloseRow | null;
+    } | null;
+    setLastClose(data?.cierre ?? null);
+
+    setCloseMessage("Cierre guardado");
+    setCashCount("");
+    setCashNote("");
+  };
+
+  return (
+    <div className="space-y-5">
+      {canSeeFinancials && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            icon={ArrowUpCircle}
+            label="Vendido hoy"
+            tone="cyan"
+            value={formatCurrency(todayRevenue)}
+          />
+          <MetricCard
+            icon={ReceiptText}
+            label={`Ventas ${currentShift === "manana" ? "manana" : "tarde"}`}
+            tone="green"
+            value={String(shiftSales.length)}
+          />
+          <MetricCard
+            icon={Users}
+            label="Trabajando ahora"
+            tone={alertStatuses.length ? "amber" : "green"}
+            value={String(workingStatuses.length)}
+          />
+          <MetricCard
+            icon={TriangleAlert}
+            label="Reposicion"
+            tone={lowStock.length || lowFlavorStock.length ? "amber" : "neutral"}
+            value={String(lowStock.length + lowFlavorStock.length)}
+          />
+        </div>
+      )}
+
+      <div
+        className={cn(
+          "grid gap-5",
+          canSeeFinancials ? "xl:grid-cols-[1fr_0.9fr]" : "xl:grid-cols-[0.9fr_1.1fr]",
+        )}
+      >
+        {canSeeFinancials && (
+        <DarkPanel>
+          <PanelHeader icon={LayoutDashboard} title="Hoy" />
+          <div className="grid gap-3 p-4 sm:grid-cols-2">
+            <FinanceLine
+              icon={ArrowUpCircle}
+              label="Total vendido"
+              tone="cyan"
+              value={todayRevenue}
+            />
+            <FinanceLine
+              icon={ArrowDownCircle}
+              label="Costo vendido"
+              tone="amber"
+              value={soldProductCost}
+            />
+            <FinanceLine
+              icon={CreditCard}
+              label="Comisiones"
+              tone="amber"
+              value={commissionCost}
+            />
+            <FinanceLine
+              icon={WalletCards}
+              label="Gastos fijos"
+              tone="amber"
+              value={fixedExpenses}
+            />
+            <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4 sm:col-span-2">
+              <p className="text-sm text-emerald-100">Ganancia real</p>
+              <p className="mt-2 text-3xl font-semibold text-emerald-200">
+                {formatCurrency(netProfit)}
+              </p>
+            </div>
+          </div>
+        </DarkPanel>
+        )}
+
+        <DarkPanel>
+          <PanelHeader icon={DollarSign} title="Cierre de caja" />
+          <div className="space-y-4 p-4">
+            <div className={cn("grid gap-3", canSeeFinancials && "sm:grid-cols-2")}>
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="text-xs uppercase text-zinc-500">Turno</p>
+                <p className="mt-1 font-semibold text-zinc-100">
+                  {currentShift === "manana" ? "Manana" : "Tarde"}
+                </p>
+              </div>
+              {canSeeFinancials && (
+              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <p className="text-xs uppercase text-zinc-500">Efectivo sistema</p>
+                <p className="mt-1 font-semibold text-zinc-100">
+                  {formatCurrency(shiftCash)}
+                </p>
+              </div>
+              )}
+            </div>
+            <InlineInput
+              label="Efectivo contado"
+              onChange={setCashCount}
+              type="number"
+              value={cashCount}
+            />
+            <label className="text-xs font-semibold text-zinc-500">
+              Nota
+              <input
+                className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onChange={(event) => setCashNote(event.target.value)}
+                value={cashNote}
+              />
+            </label>
+            {canSeeFinancials && (
+              <div
+                className={cn(
+                  "rounded-lg border p-3 text-sm font-semibold",
+                  cashDifference === 0
+                    ? "border-white/10 bg-black/20 text-zinc-200"
+                    : cashDifference > 0
+                      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+                      : "border-rose-300/20 bg-rose-300/10 text-rose-100",
+                )}
+              >
+                Diferencia: {formatCurrency(cashDifference)}
+              </div>
+            )}
+            <Button
+              className="h-11 w-full bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+              disabled={isSavingClose}
+              onClick={saveCashClose}
+              type="button"
+            >
+              {isSavingClose ? "Guardando..." : "Guardar cierre"}
+            </Button>
+            {closeMessage && (
+              <p className="text-sm font-semibold text-cyan-100">{closeMessage}</p>
+            )}
+          </div>
+        </DarkPanel>
+
+        <DarkPanel>
+          <PanelHeader icon={ReceiptText} title="Ultimo cierre cargado" />
+          <div className="p-4">
+            {lastClose ? (
+              <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase text-zinc-500">Turno</p>
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {lastClose.turno === "manana" ? "Manana" : "Tarde"}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs uppercase text-zinc-500">Cargado</p>
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {formatFullDateTime(lastClose.creado)}
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-xs uppercase text-zinc-500">
+                      Efectivo contado
+                    </p>
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {formatCurrency(toNumber(lastClose.efectivo_contado))}
+                    </p>
+                  </div>
+                  {canSeeFinancials && (
+                    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                      <p className="text-xs uppercase text-zinc-500">Diferencia</p>
+                      <p
+                        className={cn(
+                          "mt-1 font-semibold",
+                          toNumber(lastClose.diferencia) >= 0
+                            ? "text-emerald-200"
+                            : "text-rose-200",
+                        )}
+                      >
+                        {formatCurrency(toNumber(lastClose.diferencia))}
+                      </p>
+                    </div>
+                  )}
+                </div>
+                {lastClose.observacion && (
+                  <p className="text-sm text-zinc-400">{lastClose.observacion}</p>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center">
+                <p className="text-sm text-zinc-500">
+                  Todavia no cargaste un cierre.
+                </p>
+              </div>
+            )}
+          </div>
+        </DarkPanel>
+      </div>
+    </div>
   );
 }
 
 function AnalisisView({
+  channelCommissions,
   expenses,
   expenseHistory,
+  paymentMethodCommissions,
   paymentMethods,
   saleItems,
   sales,
 }: {
+  channelCommissions: Record<SaleChannel, number>;
   expenses: Expense[];
   expenseHistory: ExpenseHistory[];
+  paymentMethodCommissions: Record<string, number>;
   paymentMethods: string[];
   saleItems: SaleItem[];
   sales: Sale[];
 }) {
-  const argentinaNow = getArgentinaDateParts(new Date());
   const [activePanel, setActivePanel] = useState<
     "resumen" | "rankings" | "ventas" | "historico" | "gastos"
   >("resumen");
+  const [periodFilter, setPeriodFilter] = useState<AnalysisPeriod>("mes");
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>("todo");
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("todo");
   const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null);
-  const monthStart = createArgentinaDate({
-    year: argentinaNow.year,
-    month: argentinaNow.month,
-    day: 1,
-  });
-  const monthEnd = endOfDay(
-    createArgentinaDate({
-      year: argentinaNow.year,
-      month: argentinaNow.month,
-      day: getDaysInMonth(argentinaNow.year, argentinaNow.month),
-    }),
+  const [analysisSalesPage, setAnalysisSalesPage] = useState(1);
+  const { start: periodStart, end: periodEnd } = getAnalysisPeriodRange(
+    periodFilter,
+    sales,
+    expenseHistory,
   );
-  const monthSales = sales.filter((sale) => {
+  const periodSales = sales.filter((sale) => {
     const saleDate = new Date(sale.createdAt);
-    return saleDate >= monthStart && saleDate <= monthEnd;
+    return saleDate >= periodStart && saleDate <= periodEnd;
   });
-  const monthGrossRevenue = monthSales.reduce((total, sale) => total + sale.total, 0);
+  const periodGrossRevenue = periodSales.reduce((total, sale) => total + sale.total, 0);
   const expenseBreakdown = calculateExpenseBreakdownBetween(
-    monthStart,
-    monthEnd,
+    periodStart,
+    periodEnd,
     expenses,
     expenseHistory,
   );
   const fixedExpenses = expenseBreakdown.fixed;
-  const morningRevenue = monthSales
-    .filter((sale) => getSaleHour(sale) < SHIFT_CHANGE_HOUR)
-    .reduce((total, sale) => total + sale.total, 0);
-  const afternoonRevenue = monthSales
-    .filter((sale) => getSaleHour(sale) >= SHIFT_CHANGE_HOUR)
-    .reduce((total, sale) => total + sale.total, 0);
-  const monthSaleItems = saleItems.filter((item) => {
+  const periodSaleItems = saleItems.filter((item) => {
     const itemDate = new Date(item.createdAt);
-    return itemDate >= monthStart && itemDate <= monthEnd;
+    return itemDate >= periodStart && itemDate <= periodEnd;
   });
-  const filteredSales =
-    shiftFilter === "todo"
-      ? monthSales
-      : monthSales.filter((sale) => saleMatchesShiftFilter(sale, shiftFilter));
+  const filteredSales = periodSales.filter(
+    (sale) =>
+      saleMatchesShiftFilter(sale, shiftFilter) &&
+      saleMatchesChannelFilter(sale, channelFilter),
+  );
   const filteredSaleIds = new Set(filteredSales.map((sale) => sale.id));
-  const filteredSaleItems =
-    shiftFilter === "todo"
-      ? monthSaleItems
-      : monthSaleItems.filter((item) => filteredSaleIds.has(item.saleId));
+  const filteredSaleItems = periodSaleItems.filter((item) =>
+    filteredSaleIds.has(item.saleId),
+  );
+  const localRevenue = filteredSales
+    .filter((sale) => sale.channel === "local")
+    .reduce((total, sale) => total + sale.total, 0);
+  const deliverySales = filteredSales.filter((sale) => sale.channel === "pedidos_ya");
+  const deliveryRevenue = deliverySales.reduce((total, sale) => total + sale.total, 0);
+  const deliveryMorningRevenue = deliverySales
+    .filter((sale) => saleIsMorning(sale))
+    .reduce((total, sale) => total + sale.total, 0);
+  const deliveryAfternoonRevenue = deliverySales
+    .filter((sale) => !saleIsMorning(sale))
+    .reduce((total, sale) => total + sale.total, 0);
+  const morningRevenue = filteredSales
+    .filter((sale) => saleIsMorning(sale))
+    .reduce((total, sale) => total + sale.total, 0);
+  const afternoonRevenue = filteredSales
+    .filter((sale) => !saleIsMorning(sale))
+    .reduce((total, sale) => total + sale.total, 0);
   const grossRevenue = filteredSales.reduce((total, sale) => total + sale.total, 0);
   const soldProductCost = filteredSaleItems.reduce(
     (total, item) => total + item.cost * item.quantity,
     0,
   );
+  const hasAnalysisFilters = shiftFilter !== "todo" || channelFilter !== "todo";
   const allocatedFixedExpenses =
-    shiftFilter === "todo"
+    !hasAnalysisFilters
       ? fixedExpenses
-      : allocateExpenseByRevenueShare(fixedExpenses, grossRevenue, monthGrossRevenue);
-  const netProfit = grossRevenue - soldProductCost - allocatedFixedExpenses;
-  const soldProducts = filteredSaleItems.reduce(
-    (total, item) => total + item.quantity,
-    0,
+      : allocateExpenseByRevenueShare(fixedExpenses, grossRevenue, periodGrossRevenue);
+  const commissionCost = calculateCommissionCost(
+    filteredSales,
+    paymentMethodCommissions,
+    channelCommissions,
   );
+  const netProfit =
+    grossRevenue - soldProductCost - allocatedFixedExpenses - commissionCost;
+  const soldProducts = filteredSales.reduce((total, sale) => total + sale.items, 0);
+  const marginRows = Object.values(
+    filteredSaleItems.reduce<
+      Record<
+        string,
+        { product: string; quantity: number; revenue: number; cost: number }
+      >
+    >((acc, item) => {
+      const normalizedName = item.product.replace(/\s*\([^)]*\)\s*$/, "").trim();
+      const current = acc[normalizedName] ?? {
+        product: normalizedName,
+        quantity: 0,
+        revenue: 0,
+        cost: 0,
+      };
+      current.quantity += item.quantity;
+      current.revenue += item.total || item.price * item.quantity;
+      current.cost += item.cost * item.quantity;
+      acc[normalizedName] = current;
+      return acc;
+    }, {}),
+  )
+    .map((row) => ({
+      ...row,
+      margin: row.revenue - row.cost,
+      marginRate: row.revenue > 0 ? ((row.revenue - row.cost) / row.revenue) * 100 : 0,
+    }))
+    .sort((left, right) => right.margin - left.margin)
+    .slice(0, 8);
   const methodTotals = [
     ...new Set([
       ...paymentMethods,
@@ -3948,11 +5687,17 @@ function AnalisisView({
       .reduce((sum, sale) => sum + sale.total, 0),
   }));
   const maxMethodTotal = Math.max(...methodTotals.map((item) => item.total), 1);
-  const yearlyTotals = sales.reduce<Record<string, number>>((acc, sale) => {
-    const year = getArgentinaYear(sale.createdAt).toString();
-    acc[year] = (acc[year] ?? 0) + sale.total;
-    return acc;
-  }, {});
+  const yearlyTotals = sales
+    .filter(
+      (sale) =>
+        saleMatchesShiftFilter(sale, shiftFilter) &&
+        saleMatchesChannelFilter(sale, channelFilter),
+    )
+    .reduce<Record<string, number>>((acc, sale) => {
+      const year = getArgentinaYear(sale.createdAt).toString();
+      acc[year] = (acc[year] ?? 0) + sale.total;
+      return acc;
+    }, {});
   const yearlyRows = Object.entries(yearlyTotals)
     .sort(([left], [right]) => Number(right) - Number(left))
     .map(([year, total]) => ({ year, total }));
@@ -3984,10 +5729,40 @@ function AnalisisView({
     },
     {},
   );
+  const analysisSalesPageSize = 10;
+  const analysisSalesTotalPages = Math.max(
+    1,
+    Math.ceil(filteredSales.length / analysisSalesPageSize),
+  );
+  const safeAnalysisSalesPage = Math.min(
+    analysisSalesPage,
+    analysisSalesTotalPages,
+  );
+  const paginatedAnalysisSales = filteredSales.slice(
+    (safeAnalysisSalesPage - 1) * analysisSalesPageSize,
+    safeAnalysisSalesPage * analysisSalesPageSize,
+  );
+  const periodRangeLabel = `${formatShortDate(periodStart)} ${getArgentinaYear(
+    periodStart,
+  )} - ${formatShortDate(periodEnd)} ${getArgentinaYear(periodEnd)}`;
+  const periodName =
+    analysisPeriodOptions.find((option) => option.id === periodFilter)?.label ??
+    "Periodo";
+
+  useEffect(() => {
+    if (analysisSalesPage !== safeAnalysisSalesPage) {
+      setAnalysisSalesPage(safeAnalysisSalesPage);
+    }
+  }, [analysisSalesPage, safeAnalysisSalesPage]);
+
+  useEffect(() => {
+    setAnalysisSalesPage(1);
+    setExpandedSaleId(null);
+  }, [activePanel, channelFilter, periodFilter, shiftFilter]);
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
         <MetricCard
           icon={ArrowUpCircle}
           label="Total vendido sin restar"
@@ -4002,9 +5777,15 @@ function AnalisisView({
         />
         <MetricCard
           icon={WalletCards}
-          label={shiftFilter === "todo" ? "Gastos fijos" : "Gastos fijos estimados"}
+          label={!hasAnalysisFilters ? "Gastos fijos" : "Gastos fijos estimados"}
           tone={fixedExpenses > 0 ? "amber" : "neutral"}
           value={formatCurrency(allocatedFixedExpenses)}
+        />
+        <MetricCard
+          icon={CreditCard}
+          label="Comisiones"
+          tone={commissionCost > 0 ? "amber" : "neutral"}
+          value={formatCurrency(commissionCost)}
         />
         <MetricCard
           icon={ReceiptText}
@@ -4021,69 +5802,114 @@ function AnalisisView({
       </div>
 
       <DarkPanel>
-        <div className="flex flex-wrap gap-2 p-4">
-          {[
-            { id: "resumen", label: "Resumen" },
-            { id: "rankings", label: "Rankings" },
-            { id: "ventas", label: "Ventas" },
-            { id: "historico", label: "HistÃƒÆ’Ã‚Â³rico" },
-            { id: "gastos", label: "Gastos" },
-          ].map((tab) => (
-            <button
-              className={cn(
-                "rounded-lg border px-4 py-2 text-sm font-semibold transition",
-                activePanel === tab.id
-                  ? "border-cyan-300 bg-cyan-300 text-zinc-950"
-                  : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
-              )}
-              key={tab.id}
-              onClick={() =>
-                setActivePanel(
-                  tab.id as "resumen" | "rankings" | "ventas" | "historico" | "gastos",
-                )
-              }
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        <div className="border-t border-white/10 px-4 py-3">
+        <div className="space-y-4 p-4">
+          <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
           <div className="flex flex-wrap gap-2">
             {[
-              { id: "todo", label: "Todo" },
-              { id: "manana", label: "MaÃƒÆ’Ã‚Â±ana" },
-              { id: "tarde", label: "Tarde" },
-            ].map((option) => (
+              { id: "resumen", label: "Resumen" },
+              { id: "rankings", label: "Rankings" },
+              { id: "ventas", label: "Ventas" },
+              { id: "historico", label: "Histórico" },
+              { id: "gastos", label: "Gastos" },
+            ].map((tab) => (
               <button
                 className={cn(
-                  "rounded-lg border px-3 py-2 text-sm font-semibold transition",
-                  shiftFilter === option.id
+                  "h-10 rounded-lg border px-3 text-sm font-semibold transition",
+                  activePanel === tab.id
                     ? "border-cyan-300 bg-cyan-300 text-zinc-950"
                     : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
                 )}
-                key={option.id}
-                onClick={() => setShiftFilter(option.id as ShiftFilter)}
+                key={tab.id}
+                onClick={() =>
+                  setActivePanel(
+                    tab.id as "resumen" | "rankings" | "ventas" | "historico" | "gastos",
+                  )
+                }
                 type="button"
               >
-                {option.label}
+                {tab.label}
               </button>
             ))}
+          </div>
+          <div className="grid gap-2 xl:grid-cols-3 2xl:min-w-[760px]">
+            <CompactFilterGroup
+              label="Periodo"
+              onChange={setPeriodFilter}
+              options={analysisPeriodOptions}
+              value={periodFilter}
+            />
+            <CompactFilterGroup
+              label="Turno"
+              onChange={setShiftFilter}
+              options={shiftFilterOptions}
+              value={shiftFilter}
+            />
+            <CompactFilterGroup
+              label="Canal"
+              onChange={setChannelFilter}
+              options={channelFilterOptions}
+              value={channelFilter}
+            />
+          </div>
+          </div>
+          <div className="flex flex-col gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-50 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 font-semibold">
+              <CalendarClock className="size-4" />
+              Datos usados en este analisis
+            </div>
+            <p className="text-cyan-50/85">
+              {periodName}: {periodRangeLabel}
+            </p>
           </div>
         </div>
       </DarkPanel>
 
       {activePanel === "resumen" && (
-      <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+      <div className="grid gap-5 xl:grid-cols-3">
         <DarkPanel>
           <PanelHeader
             icon={LayoutDashboard}
             title="Ventas por turno"
-            subtitle="MaÃƒÆ’Ã‚Â±ana hasta las 16:00, tarde desde las 16:00"
           />
           <div className="grid gap-3 p-4 sm:grid-cols-2">
-            <ShiftCard label="MaÃƒÆ’Ã‚Â±ana" value={morningRevenue} icon={Coffee} />
+            <ShiftCard label="Mañana" value={morningRevenue} icon={Coffee} />
             <ShiftCard label="Tarde" value={afternoonRevenue} icon={Flame} />
+          </div>
+        </DarkPanel>
+
+        <DarkPanel>
+          <PanelHeader
+            icon={Store}
+            title="Canales de venta"
+          />
+          <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+            {[
+              { label: "Local", value: localRevenue, icon: Store },
+              { label: "Pedidos Ya", value: deliveryRevenue, icon: ShoppingCart },
+              { label: "Pedidos Ya mañana", value: deliveryMorningRevenue, icon: Coffee },
+              { label: "Pedidos Ya tarde", value: deliveryAfternoonRevenue, icon: Flame },
+            ].map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <div
+                  className="rounded-lg border border-white/10 bg-black/20 p-4"
+                  key={item.label}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-zinc-500">{item.label}</p>
+                      <p className="mt-2 text-xl font-semibold text-zinc-100">
+                        {formatCurrency(item.value)}
+                      </p>
+                    </div>
+                    <div className="flex size-10 items-center justify-center rounded-lg bg-cyan-300/10 text-cyan-200">
+                      <Icon className="size-5" />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </DarkPanel>
 
@@ -4091,7 +5917,6 @@ function AnalisisView({
           <PanelHeader
             icon={BarChart3}
             title="Ventas por metodo de pago"
-            subtitle="Distribucion de ingresos"
           />
           <div className="space-y-4 p-4">
             {methodTotals.map((item) => (
@@ -4119,7 +5944,6 @@ function AnalisisView({
           <PanelHeader
             icon={Snowflake}
             title="Ranking de gustos"
-            subtitle="Los sabores mas pedidos del mes"
           />
           <div className="space-y-4 p-4">
             {topFlavors.length ? (
@@ -4144,7 +5968,7 @@ function AnalisisView({
               ))
             ) : (
               <p className="text-sm text-zinc-500">
-                TodavÃƒÆ’Ã‚Â­a no hay gustos vendidos este mes.
+                Todavía no hay gustos vendidos este mes.
               </p>
             )}
           </div>
@@ -4154,7 +5978,6 @@ function AnalisisView({
           <PanelHeader
             icon={Package}
             title="Ranking de productos"
-            subtitle="Los productos mas vendidos del mes"
           />
           <div className="space-y-4 p-4">
             {topProducts.length ? (
@@ -4179,7 +6002,45 @@ function AnalisisView({
               ))
             ) : (
               <p className="text-sm text-zinc-500">
-                TodavÃƒÆ’Ã‚Â­a no hay productos vendidos este mes.
+                Todavía no hay productos vendidos este mes.
+              </p>
+            )}
+          </div>
+        </DarkPanel>
+
+        <DarkPanel>
+          <PanelHeader
+            icon={BadgeDollarSign}
+            title="Margen por producto"
+          />
+          <div className="space-y-3 p-4">
+            {marginRows.length ? (
+              marginRows.map((row) => (
+                <div
+                  className="rounded-lg border border-white/10 bg-black/20 p-3"
+                  key={row.product}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-zinc-100">{row.product}</p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {row.quantity} vendidos
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold text-emerald-200">
+                        {formatCurrency(row.margin)}
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {row.marginRate.toFixed(1)}%
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="text-sm text-zinc-500">
+                Todavia no hay ventas para calcular margen.
               </p>
             )}
           </div>
@@ -4192,7 +6053,6 @@ function AnalisisView({
         <PanelHeader
           icon={ReceiptText}
           title="Detalle de ventas"
-          subtitle={`${filteredSales.length} comprobantes en el periodo`}
         />
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
@@ -4201,12 +6061,13 @@ function AnalisisView({
                 <th className="px-4 py-3 font-semibold">Pedido</th>
                 <th className="px-4 py-3 font-semibold">Cliente</th>
                 <th className="px-4 py-3 font-semibold">Hora</th>
-                <th className="px-4 py-3 font-semibold">Metodo</th>
+                <th className="px-4 py-3 font-semibold">Canal</th>
+                <th className="px-4 py-3 font-semibold">Método</th>
                 <th className="px-4 py-3 text-right font-semibold">Total</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/10">
-              {filteredSales.map((sale) => {
+              {paginatedAnalysisSales.map((sale) => {
                 const saleDetails = saleDetailsById[sale.id] ?? [];
                 const firstItem = saleDetails[0];
                 const hiddenCount = Math.max(saleDetails.length - 1, 0);
@@ -4238,6 +6099,9 @@ function AnalisisView({
                       </td>
                       <td className="px-4 py-3 text-zinc-400">{sale.customer}</td>
                       <td className="px-4 py-3 text-zinc-400">{sale.time}</td>
+                      <td className="px-4 py-3 text-zinc-400">
+                        {getSaleChannelLabel(sale.channel)}
+                      </td>
                       <td className="px-4 py-3 text-zinc-400">{sale.method}</td>
                       <td className="px-4 py-3 text-right font-semibold text-emerald-200">
                         {formatCurrency(sale.total)}
@@ -4245,9 +6109,9 @@ function AnalisisView({
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td className="bg-black/20 px-4 py-4" colSpan={5}>
+                        <td className="bg-black/20 px-4 py-4" colSpan={6}>
                           <div className="space-y-4">
-                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                               <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                                 <p className="text-xs uppercase text-zinc-500">Cliente</p>
                                 <p className="mt-2 font-semibold text-zinc-100">
@@ -4255,7 +6119,13 @@ function AnalisisView({
                                 </p>
                               </div>
                               <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                                <p className="text-xs uppercase text-zinc-500">Metodo</p>
+                                <p className="text-xs uppercase text-zinc-500">Canal</p>
+                                <p className="mt-2 font-semibold text-zinc-100">
+                                  {getSaleChannelLabel(sale.channel)}
+                                </p>
+                              </div>
+                              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                <p className="text-xs uppercase text-zinc-500">Método</p>
                                 <p className="mt-2 font-semibold text-zinc-100">
                                   {sale.method}
                                 </p>
@@ -4331,6 +6201,17 @@ function AnalisisView({
             </tbody>
           </table>
         </div>
+        {filteredSales.length > analysisSalesPageSize && (
+          <div className="border-t border-white/10 p-4">
+            <PaginationControls
+              currentPage={safeAnalysisSalesPage}
+              label={`${filteredSales.length} comprobantes`}
+              onPageChange={setAnalysisSalesPage}
+              pageSize={analysisSalesPageSize}
+              totalItems={filteredSales.length}
+            />
+          </div>
+        )}
       </DarkPanel>
       )}
 
@@ -4338,8 +6219,7 @@ function AnalisisView({
       <DarkPanel>
         <PanelHeader
           icon={CalendarClock}
-          title="HistÃƒÆ’Ã‚Â³rico por aÃƒÆ’Ã‚Â±o"
-          subtitle="Resumen de todos los aÃƒÆ’Ã‚Â±os registrados"
+          title="Histórico por año"
         />
         <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
           {yearlyRows.length ? (
@@ -4348,14 +6228,14 @@ function AnalisisView({
                 className="rounded-lg border border-white/10 bg-black/20 p-4"
                 key={row.year}
               >
-                <p className="text-sm text-zinc-500">AÃƒÆ’Ã‚Â±o {row.year}</p>
+                <p className="text-sm text-zinc-500">Año {row.year}</p>
                 <p className="mt-2 text-xl font-semibold text-cyan-100">
                   {formatCurrency(row.total)}
                 </p>
               </div>
             ))
           ) : (
-            <p className="text-sm text-zinc-500">TodavÃƒÆ’Ã‚Â­a no hay ventas histÃƒÆ’Ã‚Â³ricas.</p>
+            <p className="text-sm text-zinc-500">Todavía no hay ventas históricas.</p>
           )}
         </div>
       </DarkPanel>
@@ -4366,7 +6246,6 @@ function AnalisisView({
         <PanelHeader
           icon={DollarSign}
           title="Resumen de costos y gastos"
-          subtitle="Todo lo que se resta para calcular la ganancia real"
         />
         <div className="grid gap-5 p-4 xl:grid-cols-3">
           <div className="rounded-lg border border-white/10 bg-black/20 p-4">
@@ -4378,7 +6257,13 @@ function AnalisisView({
           <div className="rounded-lg border border-white/10 bg-black/20 p-4">
             <p className="text-sm text-zinc-500">Gastos fijos</p>
             <p className="mt-2 text-2xl font-semibold text-amber-100">
-              {formatCurrency(fixedExpenses)}
+              {formatCurrency(allocatedFixedExpenses)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+            <p className="text-sm text-zinc-500">Comisiones</p>
+            <p className="mt-2 text-2xl font-semibold text-amber-100">
+              {formatCurrency(commissionCost)}
             </p>
           </div>
           <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4">
@@ -4439,6 +6324,85 @@ const endOfDay = (date: Date) => {
   });
 };
 
+const startOfWeek = (date: Date) => {
+  const day = startOfDay(date);
+  const weekday = day.getUTCDay();
+  const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
+  return startOfDay(addArgentinaDays(day, mondayOffset));
+};
+
+const getDataDateRange = (
+  sales: Sale[],
+  expenseHistory: ExpenseHistory[] = [],
+) => {
+  const timestamps = [
+    ...sales.map((sale) => new Date(sale.createdAt).getTime()),
+    ...expenseHistory.map((snapshot) => new Date(snapshot.startsAt).getTime()),
+  ].filter((value) => Number.isFinite(value));
+
+  if (!timestamps.length) {
+    const today = new Date();
+    return { start: startOfDay(today), end: endOfDay(today) };
+  }
+
+  return {
+    start: startOfDay(new Date(Math.min(...timestamps))),
+    end: endOfDay(new Date(Math.max(...timestamps))),
+  };
+};
+
+const getAnalysisPeriodRange = (
+  period: AnalysisPeriod,
+  sales: Sale[],
+  expenseHistory: ExpenseHistory[],
+) => {
+  const nowParts = getArgentinaDateParts(new Date());
+  const today = createArgentinaDate(nowParts);
+
+  if (period === "dia") {
+    return { start: startOfDay(today), end: endOfDay(today) };
+  }
+
+  if (period === "semana") {
+    const start = startOfWeek(today);
+    return { start, end: endOfDay(addArgentinaDays(start, 6)) };
+  }
+
+  if (period === "mes") {
+    const start = createArgentinaDate({
+      year: nowParts.year,
+      month: nowParts.month,
+      day: 1,
+    });
+    const end = endOfDay(
+      createArgentinaDate({
+        year: nowParts.year,
+        month: nowParts.month,
+        day: getDaysInMonth(nowParts.year, nowParts.month),
+      }),
+    );
+    return { start, end };
+  }
+
+  if (period === "ano") {
+    const start = createArgentinaDate({
+      year: nowParts.year,
+      month: 1,
+      day: 1,
+    });
+    const end = endOfDay(
+      createArgentinaDate({
+        year: nowParts.year,
+        month: 12,
+        day: 31,
+      }),
+    );
+    return { start, end };
+  }
+
+  return getDataDateRange(sales, expenseHistory);
+};
+
 const normalizeExpenseCategory = (value: string) =>
   value
     .trim()
@@ -4492,14 +6456,16 @@ const calculateExpenseBreakdownBetween = (
   const finalDay = startOfDay(end);
 
   while (cursor <= finalDay) {
+    const dateParts = getArgentinaDateParts(cursor);
+    const daysInCursorMonth = getDaysInMonth(dateParts.year, dateParts.month);
     const snapshot = getExpenseBreakdownForDate(
       endOfDay(cursor),
       expenses,
       expenseHistory,
     );
-    breakdown.fixed += snapshot.fixed / 30;
-    breakdown.production += snapshot.production / 30;
-    breakdown.total += snapshot.total / 30;
+    breakdown.fixed += snapshot.fixed / daysInCursorMonth;
+    breakdown.production += snapshot.production / daysInCursorMonth;
+    breakdown.total += snapshot.total / daysInCursorMonth;
     cursor = addArgentinaDays(cursor, 1);
   }
 
@@ -4531,17 +6497,20 @@ const summarizeSales = (
   sales: Sale[],
   saleItems: SaleItem[],
   expenseBreakdown: { total: number },
+  paymentMethodCommissions: Record<string, number>,
+  channelCommissions: Record<SaleChannel, number>,
   shiftFilter: ShiftFilter = "todo",
+  channelFilter: ChannelFilter = "todo",
 ): HistoryRow => {
-  const filteredSales =
-    shiftFilter === "todo"
-      ? sales
-      : sales.filter((sale) => saleMatchesShiftFilter(sale, shiftFilter));
+  const filteredSales = sales.filter(
+    (sale) =>
+      saleMatchesShiftFilter(sale, shiftFilter) &&
+      saleMatchesChannelFilter(sale, channelFilter),
+  );
   const filteredSaleIds = new Set(filteredSales.map((sale) => sale.id));
-  const filteredSaleItems =
-    shiftFilter === "todo"
-      ? saleItems
-      : saleItems.filter((item) => filteredSaleIds.has(item.saleId));
+  const filteredSaleItems = saleItems.filter((item) =>
+    filteredSaleIds.has(item.saleId),
+  );
   const periodGross = sales.reduce((total, sale) => total + sale.total, 0);
   const gross = filteredSales.reduce((total, sale) => total + sale.total, 0);
   const items = filteredSales.reduce((total, sale) => total + sale.items, 0);
@@ -4549,34 +6518,45 @@ const summarizeSales = (
     (total, item) => total + item.cost * item.quantity,
     0,
   );
+  const hasFilters = shiftFilter !== "todo" || channelFilter !== "todo";
   const allocatedExpense =
-    shiftFilter === "todo"
+    !hasFilters
       ? expenseBreakdown.total
       : allocateExpenseByRevenueShare(expenseBreakdown.total, gross, periodGross);
+  const commissionCost = calculateCommissionCost(
+    filteredSales,
+    paymentMethodCommissions,
+    channelCommissions,
+  );
 
   return {
     label: "",
     gross,
-    net: gross - soldProductCost - allocatedExpense,
+    net: gross - soldProductCost - allocatedExpense - commissionCost,
     items,
   };
 };
 
 function HistorialView({
+  channelCommissions,
   expenses,
   expenseHistory,
+  paymentMethodCommissions,
   saleItems,
   sales,
 }: {
+  channelCommissions: Record<SaleChannel, number>;
   expenses: Expense[];
   expenseHistory: ExpenseHistory[];
+  paymentMethodCommissions: Record<string, number>;
   saleItems: SaleItem[];
   sales: Sale[];
 }) {
   const [activeHistoryView, setActiveHistoryView] = useState<
-    "diario" | "semanal" | "mensual" | "anual"
+    "diario" | "semanal" | "mensual" | "anual" | "total"
   >("diario");
   const [shiftFilter, setShiftFilter] = useState<ShiftFilter>("todo");
+  const [channelFilter, setChannelFilter] = useState<ChannelFilter>("todo");
   const argentinaTodayParts = getArgentinaDateParts(new Date());
   const currentDate = createArgentinaDate(argentinaTodayParts);
   const currentYear = argentinaTodayParts.year;
@@ -4588,7 +6568,10 @@ function HistorialView({
       getSalesBetween(sales, start, end),
       getSaleItemsBetween(saleItems, start, end),
       calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
+      paymentMethodCommissions,
+      channelCommissions,
       shiftFilter,
+      channelFilter,
     );
 
     return {
@@ -4604,7 +6587,10 @@ function HistorialView({
       getSalesBetween(sales, day, endOfDay(day)),
       getSaleItemsBetween(saleItems, day, endOfDay(day)),
       calculateExpenseBreakdownBetween(day, endOfDay(day), expenses, expenseHistory),
+      paymentMethodCommissions,
+      channelCommissions,
       shiftFilter,
+      channelFilter,
     );
 
     return {
@@ -4631,7 +6617,10 @@ function HistorialView({
       getSalesBetween(sales, start, end),
       getSaleItemsBetween(saleItems, start, end),
       calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
+      paymentMethodCommissions,
+      channelCommissions,
       shiftFilter,
+      channelFilter,
     );
 
     return {
@@ -4666,7 +6655,10 @@ function HistorialView({
       getSalesBetween(sales, start, end),
       getSaleItemsBetween(saleItems, start, end),
       calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
+      paymentMethodCommissions,
+      channelCommissions,
       shiftFilter,
+      channelFilter,
     );
 
     return {
@@ -4674,57 +6666,73 @@ function HistorialView({
       label: String(year),
     };
   });
+  const totalRange = getDataDateRange(sales, expenseHistory);
+  const totalSummary = summarizeSales(
+    getSalesBetween(sales, totalRange.start, totalRange.end),
+    getSaleItemsBetween(saleItems, totalRange.start, totalRange.end),
+    calculateExpenseBreakdownBetween(
+      totalRange.start,
+      totalRange.end,
+      expenses,
+      expenseHistory,
+    ),
+    paymentMethodCommissions,
+    channelCommissions,
+    shiftFilter,
+    channelFilter,
+  );
+  const totalRows = [
+    {
+      ...totalSummary,
+      label: "Total",
+      dateLabel: `${formatShortDate(totalRange.start)} - ${formatShortDate(totalRange.end)}`,
+    },
+  ];
 
   return (
     <div className="space-y-5">
       <DarkPanel>
-        <div className="flex flex-wrap gap-2 p-4">
-          {[
-            { id: "diario", label: "Diario" },
-            { id: "semanal", label: "Semanal" },
-            { id: "mensual", label: "Mensual" },
-            { id: "anual", label: "Anual" },
-          ].map((tab) => (
-            <button
-              className={cn(
-                "rounded-lg border px-4 py-2 text-sm font-semibold transition",
-                activeHistoryView === tab.id
-                  ? "border-cyan-300 bg-cyan-300 text-zinc-950"
-                  : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
-              )}
-              key={tab.id}
-              onClick={() =>
-                setActiveHistoryView(
-                  tab.id as "diario" | "semanal" | "mensual" | "anual",
-                )
-              }
-              type="button"
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        <div className="border-t border-white/10 px-4 py-3">
+        <div className="flex flex-col gap-3 p-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap gap-2">
             {[
-              { id: "todo", label: "Todo" },
-              { id: "manana", label: "MaÃƒÆ’Ã‚Â±ana" },
-              { id: "tarde", label: "Tarde" },
-            ].map((option) => (
+              { id: "diario", label: "Diario" },
+              { id: "semanal", label: "Semanal" },
+              { id: "mensual", label: "Mensual" },
+              { id: "anual", label: "Anual" },
+              { id: "total", label: "Total" },
+            ].map((tab) => (
               <button
                 className={cn(
                   "rounded-lg border px-3 py-2 text-sm font-semibold transition",
-                  shiftFilter === option.id
+                  activeHistoryView === tab.id
                     ? "border-cyan-300 bg-cyan-300 text-zinc-950"
                     : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
                 )}
-                key={option.id}
-                onClick={() => setShiftFilter(option.id as ShiftFilter)}
+                key={tab.id}
+                onClick={() =>
+                  setActiveHistoryView(
+                    tab.id as "diario" | "semanal" | "mensual" | "anual" | "total",
+                  )
+                }
                 type="button"
               >
-                {option.label}
+                {tab.label}
               </button>
             ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <CompactFilterGroup
+              label="Turno"
+              onChange={setShiftFilter}
+              options={shiftFilterOptions}
+              value={shiftFilter}
+            />
+            <CompactFilterGroup
+              label="Canal"
+              onChange={setChannelFilter}
+              options={channelFilterOptions}
+              value={channelFilter}
+            />
           </div>
         </div>
       </DarkPanel>
@@ -4733,7 +6741,7 @@ function HistorialView({
           <HistoryTable
             icon={Lightbulb}
             rows={dailyRows}
-            title="Ingresos diarios (ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Âºltima semana)"
+            title="Ingresos diarios (última semana)"
             totalLabel="Total semana"
           />
         )}
@@ -4750,7 +6758,7 @@ function HistorialView({
             icon={CalendarClock}
             rows={monthlyRows}
             title="Ingresos mensuales"
-            totalLabel="Total aÃƒÆ’Ã‚Â±o"
+            totalLabel="Total año"
           />
         )}
         {activeHistoryView === "anual" && (
@@ -4758,7 +6766,15 @@ function HistorialView({
             icon={WalletCards}
             rows={annualRows}
             title="Ingresos anuales"
-            totalLabel="Total histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico"
+            totalLabel="Total histórico"
+          />
+        )}
+        {activeHistoryView === "total" && (
+          <HistoryTable
+            icon={BadgeDollarSign}
+            rows={totalRows}
+            title="Total historico"
+            totalLabel="Total"
           />
         )}
       </div>
@@ -4788,13 +6804,13 @@ function HistoryTable({
 
   return (
     <DarkPanel>
-      <PanelHeader icon={icon} title={title} subtitle="Resumen histÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³rico" />
+      <PanelHeader icon={icon} title={title} />
       <div className="overflow-x-auto p-4">
         <table className="w-full min-w-[680px] text-left text-sm">
           <thead className="text-xs uppercase text-zinc-500">
             <tr>
               <th className="pb-2 font-semibold">Periodo</th>
-              <th className="pb-2 text-right font-semibold">Total ganÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â³</th>
+              <th className="pb-2 text-right font-semibold">Total ganó</th>
               <th className="pb-2 text-right font-semibold">Neto gastos</th>
               <th className="pb-2 text-right font-semibold">Productos</th>
             </tr>
@@ -4849,34 +6865,68 @@ function HistoryTable({
 }
 
 function FinanzasView({
+  channelCommissions,
+  commissionCost,
   expenses,
   fixedExpenses,
   grossRevenue,
   netProfit,
+  paymentMethodCommissions,
+  paymentMethods,
+  saveCommissions,
   saveExpenses,
   soldProductCost,
   totalExpenses,
   updateExpense,
 }: {
+  channelCommissions: Record<SaleChannel, number>;
+  commissionCost: number;
   expenses: Expense[];
   fixedExpenses: number;
   grossRevenue: number;
   netProfit: number;
+  paymentMethodCommissions: Record<string, number>;
+  paymentMethods: string[];
+  saveCommissions: (
+    methods: Record<string, number>,
+    channels: Record<SaleChannel, number>,
+  ) => Promise<boolean>;
   saveExpenses: () => void;
   soldProductCost: number;
   totalExpenses: number;
   updateExpense: (key: string, value: number) => void;
 }) {
   const fixedExpenseItems = expenses.filter((expense) => !isProductionExpense(expense));
-  const ignoredProductionItems = expenses.filter((expense) => isProductionExpense(expense));
+  const [methodDraft, setMethodDraft] = useState(paymentMethodCommissions);
+  const [channelDraft, setChannelDraft] = useState(channelCommissions);
+  const [isSavingCommissions, setIsSavingCommissions] = useState(false);
+
+  useEffect(() => {
+    setMethodDraft(paymentMethodCommissions);
+    setChannelDraft(channelCommissions);
+  }, [channelCommissions, paymentMethodCommissions]);
+
+  const updateMethodDraft = (method: string, value: number) => {
+    setMethodDraft((current) => ({ ...current, [method]: Math.max(0, value) }));
+  };
+
+  const updateChannelDraft = (channel: SaleChannel, value: number) => {
+    setChannelDraft((current) => ({ ...current, [channel]: Math.max(0, value) }));
+  };
+
+  const handleSaveCommissions = async () => {
+    setIsSavingCommissions(true);
+    await saveCommissions(methodDraft, channelDraft);
+    setIsSavingCommissions(false);
+  };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
+    <div className="space-y-5">
+      <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
       <DarkPanel>
         <PanelHeader
           icon={WalletCards}
           title="Ganancia del local"
-          subtitle="Ventas menos costo vendido y gastos fijos"
         />
         <div className="space-y-4 p-4">
           <FinanceLine
@@ -4898,18 +6948,21 @@ function FinanzasView({
             value={fixedExpenses}
           />
           <FinanceLine
+            icon={CreditCard}
+            label="Comisiones"
+            tone="amber"
+            value={commissionCost}
+          />
+          <FinanceLine
             icon={DollarSign}
             label="Total descontado"
             tone="amber"
-            value={soldProductCost + totalExpenses}
+            value={soldProductCost + totalExpenses + commissionCost}
           />
           <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-5">
             <p className="text-sm text-emerald-100">Ganancia real final</p>
             <p className="mt-2 text-4xl font-semibold text-emerald-200">
               {formatCurrency(netProfit)}
-            </p>
-            <p className="mt-3 text-sm text-zinc-400">
-              Formula: ventas - costo vendido - gastos fijos.
             </p>
           </div>
         </div>
@@ -4917,28 +6970,78 @@ function FinanzasView({
 
       <DarkPanel>
         <PanelHeader
-          icon={Lightbulb}
-          title="Gastos que se descuentan"
-          subtitle="Solo se descuentan gastos fijos del local"
+          icon={CreditCard}
+          title="Comisiones"
         />
         <div className="space-y-5 p-4">
-          {ignoredProductionItems.length > 0 && (
-            <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-4">
-              <p className="font-semibold text-amber-100">
-                Los gastos de produccion manuales ya no se descuentan
-              </p>
-              <p className="mt-1 text-sm text-amber-50/80">
-                Ahora la ganancia usa el costo del producto vendido para ser mas precisa.
-              </p>
-            </div>
-          )}
+          <div className="grid gap-3 sm:grid-cols-2">
+            {saleChannelOptions.map((channel) => (
+              <label
+                className="rounded-lg border border-white/10 bg-black/20 p-4"
+                key={channel.id}
+              >
+                <span className="text-sm font-semibold text-zinc-200">
+                  {channel.label}
+                </span>
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    className="h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
+                    min={0}
+                    onChange={(event) =>
+                      updateChannelDraft(channel.id, Number(event.target.value || 0))
+                    }
+                    type="number"
+                    value={channelDraft[channel.id] ?? 0}
+                  />
+                  <span className="text-sm font-semibold text-zinc-500">%</span>
+                </div>
+              </label>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {paymentMethods.map((method) => (
+              <label
+                className="rounded-lg border border-white/10 bg-black/20 p-4"
+                key={method}
+              >
+                <span className="text-sm font-semibold text-zinc-200">{method}</span>
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    className="h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
+                    min={0}
+                    onChange={(event) =>
+                      updateMethodDraft(method, Number(event.target.value || 0))
+                    }
+                    type="number"
+                    value={methodDraft[method] ?? 0}
+                  />
+                  <span className="text-sm font-semibold text-zinc-500">%</span>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="border-t border-white/10 p-4">
+          <Button
+            className="h-11 bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+            disabled={isSavingCommissions}
+            onClick={handleSaveCommissions}
+            type="button"
+          >
+            {isSavingCommissions ? "Guardando..." : "Guardar comisiones"}
+          </Button>
+        </div>
+      </DarkPanel>
 
+      <DarkPanel>
+        <PanelHeader
+          icon={Lightbulb}
+          title="Gastos que se descuentan"
+        />
+        <div className="space-y-5 p-4">
           <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
             <div>
               <p className="font-semibold text-zinc-100">Gastos fijos del local</p>
-              <p className="mt-1 text-sm text-zinc-500">
-                Sueldos, luz, agua, gas, alquiler y otros gastos generales.
-              </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -4948,7 +7051,6 @@ function FinanzasView({
                   key={expense.key}
                 >
                   <span className="text-sm font-semibold text-zinc-200">{expense.label}</span>
-                  <span className="mt-1 block text-xs text-zinc-500">{expense.category}</span>
                   <input
                     className="mt-3 h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
                     min={0}
@@ -4973,6 +7075,7 @@ function FinanzasView({
           </Button>
         </div>
       </DarkPanel>
+      </div>
     </div>
   );
 }
@@ -4990,10 +7093,17 @@ function EmpleadosView({
   staff: StaffMember[];
 }) {
   const [employeeFilter, setEmployeeFilter] = useState<"jornada" | "alertas" | "todos">(
-    "jornada",
+    "todos",
   );
   const [teamPage, setTeamPage] = useState(1);
   const [recordsPage, setRecordsPage] = useState(1);
+  const [isRecordsOpen, setIsRecordsOpen] = useState(false);
+  const [pinRequest, setPinRequest] = useState<{
+    eventType: AttendanceEvent;
+    person: StaffMember;
+  } | null>(null);
+  const [pinValue, setPinValue] = useState("");
+  const [pinError, setPinError] = useState("");
   const todayStart = startOfDay(new Date());
   const todayRecords = attendance.filter(
     (record) => new Date(record.recordedAt) >= todayStart,
@@ -5005,6 +7115,12 @@ function EmpleadosView({
   const almostEndingShift = workingStatuses.filter((status) => status.alert === "soon");
   const exceededShift = workingStatuses.filter((status) => status.alert === "over");
   const latestAttendance = attendance.slice(0, 8);
+  const todayEntries = todayRecords.filter((record) => record.eventType === "entrada").length;
+  const todayExits = todayRecords.filter((record) => record.eventType === "salida").length;
+  const latestRecord = latestAttendance[0] ?? null;
+  const latestRecordName = latestRecord
+    ? getAttendanceDisplayName(latestRecord, staff)
+    : "Sin movimientos";
   const sortedStaff = [...staff].sort((left, right) => {
     const leftStatus = attendanceStatusMap.get(getStaffKey(left));
     const rightStatus = attendanceStatusMap.get(getStaffKey(right));
@@ -5049,33 +7165,149 @@ function EmpleadosView({
     setTeamPage(1);
   }, [employeeFilter]);
 
+  const requestAttendance = (person: StaffMember, eventType: AttendanceEvent) => {
+    if (person.pin?.trim()) {
+      setPinRequest({ person, eventType });
+      setPinValue("");
+      setPinError("");
+      return;
+    }
+
+    void registerAttendance(person, eventType);
+  };
+
+  const confirmPinAttendance = async () => {
+    if (!pinRequest) return;
+
+    if (pinValue.trim() !== pinRequest.person.pin?.trim()) {
+      setPinError("PIN incorrecto");
+      return;
+    }
+
+    const saved = await registerAttendance(pinRequest.person, pinRequest.eventType);
+    if (saved) {
+      setPinRequest(null);
+      setPinValue("");
+      setPinError("");
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge className="border-emerald-300/20 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/10">
-          Trabajando ahora: {activeCount}
-        </Badge>
-        <Badge className="border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/10">
-          Registros de hoy: {todayRecords.length}
-        </Badge>
-        {almostEndingShift.length > 0 && (
-          <Badge className="border-amber-300/20 bg-amber-300/10 text-amber-100 hover:bg-amber-300/10">
-            Por cumplir 8 h: {almostEndingShift.length}
-          </Badge>
-        )}
-        {exceededShift.length > 0 && (
-          <Badge className="border-rose-300/20 bg-rose-300/10 text-rose-100 hover:bg-rose-300/10">
-            Pasados de horario: {exceededShift.length}
-          </Badge>
-        )}
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap gap-2">
+          <div className="flex items-center gap-2 rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-3 py-2">
+            <Users className="size-4 text-emerald-100" />
+            <span className="text-xs font-semibold uppercase text-emerald-100">
+              Trabajando
+            </span>
+            <strong className="text-lg leading-none text-emerald-100">
+              {activeCount}
+            </strong>
+          </div>
+
+          <div className="flex items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-3 py-2">
+            <CalendarClock className="size-4 text-cyan-100" />
+            <span className="text-xs font-semibold uppercase text-cyan-100">
+              Movimientos hoy
+            </span>
+            <strong className="text-lg leading-none text-cyan-100">
+              {todayRecords.length}
+            </strong>
+          </div>
+
+          <div
+            className={cn(
+              "flex items-center gap-2 rounded-lg border px-3 py-2",
+              exceededShift.length > 0 || almostEndingShift.length > 0
+                ? "border-rose-300/20 bg-rose-300/10"
+                : "border-white/10 bg-white/5",
+            )}
+          >
+            <TriangleAlert
+              className={cn(
+                "size-4",
+                exceededShift.length > 0 || almostEndingShift.length > 0
+                  ? "text-rose-100"
+                  : "text-zinc-500",
+              )}
+            />
+            <span
+              className={cn(
+                "text-xs font-semibold uppercase",
+                exceededShift.length > 0 || almostEndingShift.length > 0
+                  ? "text-rose-100"
+                  : "text-zinc-400",
+              )}
+            >
+              Avisos
+            </span>
+            <strong
+              className={cn(
+                "text-lg leading-none",
+                exceededShift.length > 0 || almostEndingShift.length > 0
+                  ? "text-rose-100"
+                  : "text-zinc-100",
+              )}
+            >
+              {almostEndingShift.length + exceededShift.length}
+            </strong>
+          </div>
+        </div>
+
+        <button
+          className={cn(
+            "flex w-full items-center justify-between gap-4 rounded-lg border px-4 py-3 text-left shadow-2xl transition xl:max-w-[430px]",
+            isRecordsOpen
+              ? "border-[var(--erp-border)] bg-[var(--erp-panel)] hover:bg-white/5"
+              : "border-[var(--erp-primary-border)] bg-[var(--erp-primary-soft)] hover:bg-[var(--erp-primary-hover)]",
+          )}
+          onClick={() => setIsRecordsOpen((current) => !current)}
+          type="button"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-white/5 text-[var(--erp-primary)]">
+              <CalendarClock className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold text-[var(--erp-text)]">Registros</p>
+                <span className="rounded-md border border-white/10 bg-black/20 px-2 py-0.5 text-xs font-semibold text-zinc-300">
+                  {latestAttendance.length}
+                </span>
+              </div>
+              <p className="truncate text-sm text-[var(--erp-muted)]">
+                {latestRecord
+                  ? `${latestRecordName} - ${
+                      latestRecord.eventType === "entrada" ? "Entrada" : "Salida"
+                    }`
+                  : "Sin movimientos"}
+              </p>
+            </div>
+          </div>
+          <span
+            className={cn(
+              "shrink-0 rounded-lg px-4 py-2 text-sm font-semibold",
+              isRecordsOpen
+                ? "border border-[var(--erp-border)] bg-[var(--erp-panel-alt)] text-[var(--erp-text)]"
+                : "bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
+            )}
+          >
+            {isRecordsOpen ? "Ocultar" : "Desplegar"}
+          </span>
+        </button>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+      <div
+        className={cn(
+          "grid items-start gap-5",
+          isRecordsOpen && "xl:grid-cols-[1.1fr_0.9fr]",
+        )}
+      >
         <DarkPanel>
-        <PanelHeader
+          <PanelHeader
           icon={Users}
           title="Equipo"
-          subtitle="QuiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©n estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ trabajando y quiÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©n falta marcar"
         />
         <div className="grid gap-3 p-4">
           {(almostEndingShift.length > 0 || exceededShift.length > 0) && (
@@ -5102,9 +7334,9 @@ function EmpleadosView({
           )}
           <div className="flex flex-wrap gap-2">
             {[
-              { id: "jornada", label: "En jornada" },
+              { id: "todos", label: "Todo el equipo" },
+              { id: "jornada", label: "Trabajando" },
               { id: "alertas", label: "Con aviso" },
-              { id: "todos", label: "Todos" },
             ].map((option) => (
               <Button
                 key={option.id}
@@ -5167,12 +7399,12 @@ function EmpleadosView({
                           )}
                         </div>
                         <div className="mt-2 text-sm text-zinc-400">
-                          {person.role} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ {person.area || "Sin sector"} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢{" "}
+                          {person.role} • {person.area || "Sin sector"} •{" "}
                           {person.shift || "Sin turno"}
                         </div>
                         {status?.isWorking && status.startedAt && (
                           <div className="mt-3 text-sm text-zinc-300">
-                            Desde {formatFullDateTime(status.startedAt)} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢{" "}
+                            Desde {formatFullDateTime(status.startedAt)} •{" "}
                             {formatWorkedDuration(status.workedMinutes)}
                           </div>
                         )}
@@ -5181,33 +7413,47 @@ function EmpleadosView({
                   })()}
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
-                    disabled={Boolean(attendanceStatusMap.get(getStaffKey(person))?.isWorking)}
-                    onClick={() => registerAttendance(person, "entrada")}
-                    type="button"
-                    variant="outline"
-                  >
-                    <ArrowUpCircle className="size-4" />
-                    Entrada
-                  </Button>
-                  <Button
-                    className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
-                    disabled={!attendanceStatusMap.get(getStaffKey(person))?.isWorking}
-                    onClick={() => registerAttendance(person, "salida")}
-                    type="button"
-                    variant="outline"
-                  >
-                    <ArrowDownCircle className="size-4" />
-                    Salida
-                  </Button>
+                  {attendanceStatusMap.get(getStaffKey(person))?.isWorking ? (
+                    <Button
+                      className="min-w-36 border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+                      onClick={() => requestAttendance(person, "salida")}
+                      type="button"
+                      variant="outline"
+                    >
+                      <ArrowDownCircle className="size-4" />
+                      Marcar salida
+                    </Button>
+                  ) : (
+                    <Button
+                      className="min-w-36 border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                      onClick={() => requestAttendance(person, "entrada")}
+                      type="button"
+                      variant="outline"
+                    >
+                      <ArrowUpCircle className="size-4" />
+                      Marcar entrada
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
           ))}
           {visibleStaff.length === 0 && (
-            <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center text-sm text-zinc-500">
-              No hay empleados para mostrar en este filtro.
+            <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center">
+              <p className="text-sm text-zinc-500">
+                No hay empleados para mostrar en este filtro.
+              </p>
+              {employeeFilter !== "todos" && (
+                <Button
+                  className="mt-3 border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  onClick={() => setEmployeeFilter("todos")}
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                >
+                  Ver todo el equipo
+                </Button>
+              )}
             </div>
           )}
           <PaginationControls
@@ -5219,76 +7465,179 @@ function EmpleadosView({
         </div>
         </DarkPanel>
 
-        <DarkPanel>
-          <PanelHeader
-            icon={CalendarClock}
-            title="Registros"
-            subtitle="Ultimos movimientos"
-          />
-          <div className="space-y-3 p-4">
-            <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-400">
-              Hoy hubo {todayRecords.length} movimientos:{" "}
-              <span className="text-emerald-200">
-                {todayRecords.filter((record) => record.eventType === "entrada").length}{" "}
-                entradas
-              </span>{" "}
-              y{" "}
-              <span className="text-amber-200">
-                {todayRecords.filter((record) => record.eventType === "salida").length} salidas
-              </span>
+        {isRecordsOpen && (
+        <DarkPanel className="self-start">
+          <button
+            className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-white/5"
+            onClick={() => setIsRecordsOpen((current) => !current)}
+            type="button"
+          >
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-lg bg-white/5 text-[var(--erp-primary)]">
+                <CalendarClock className="size-5" />
+              </div>
+              <div>
+                <h2 className="font-semibold text-[var(--erp-text)]">
+                  Registros
+                </h2>
+              </div>
             </div>
+            <span
+              className={cn(
+                "rounded-lg border px-4 py-2 text-sm font-semibold",
+                isRecordsOpen
+                  ? "border-[var(--erp-border)] bg-[var(--erp-panel-alt)] text-[var(--erp-text)]"
+                  : "border-[var(--erp-primary)] bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
+              )}
+            >
+              {isRecordsOpen ? "Ocultar" : "Desplegar"}
+            </span>
+          </button>
 
-            <div className="space-y-3">
-              {paginatedAttendance.map((record) => (
-                <div
-                  className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-4"
-                  key={record.id}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          "mt-0.5 size-2.5 rounded-full",
-                          record.eventType === "entrada"
-                            ? "bg-emerald-300"
-                            : "bg-amber-300",
-                        )}
-                      />
-                      <p className="truncate font-semibold text-zinc-100">
-                        {record.employeeName}
+          <div className="grid gap-3 border-t border-[var(--erp-border)] p-4 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <p className="text-xs uppercase text-zinc-500">Hoy</p>
+              <p className="mt-1 text-xl font-semibold text-zinc-100">
+                {todayRecords.length}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">movimientos</p>
+            </div>
+            <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-3">
+              <p className="text-xs uppercase text-emerald-100">Entradas</p>
+              <p className="mt-1 text-xl font-semibold text-emerald-100">
+                {todayEntries}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">registradas hoy</p>
+            </div>
+            <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3">
+              <p className="text-xs uppercase text-amber-100">Salidas</p>
+              <p className="mt-1 text-xl font-semibold text-amber-100">
+                {todayExits}
+              </p>
+              <p className="mt-1 text-xs text-zinc-500">registradas hoy</p>
+            </div>
+          </div>
+
+          {!isRecordsOpen && (
+            <div className="border-t border-[var(--erp-border)] px-4 py-3">
+              <p className="text-xs uppercase text-zinc-500">Último movimiento</p>
+              <p className="mt-1 truncate text-sm font-semibold text-zinc-100">
+                {latestRecordName}
+              </p>
+              {latestRecord && (
+                <p className="mt-1 text-xs text-zinc-500">
+                  {latestRecord.eventType === "entrada" ? "Entrada" : "Salida"} ·{" "}
+                  {formatFullDateTime(latestRecord.recordedAt)}
+                </p>
+              )}
+            </div>
+          )}
+
+          {isRecordsOpen && (
+            <div className="space-y-3 border-t border-[var(--erp-border)] p-4">
+              <div className="space-y-3">
+                {paginatedAttendance.map((record) => {
+                  const displayName = getAttendanceDisplayName(record, staff);
+
+                  return (
+                    <div
+                      className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-4"
+                      key={record.id}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={cn(
+                              "mt-0.5 size-2.5 rounded-full",
+                              record.eventType === "entrada"
+                                ? "bg-emerald-300"
+                                : "bg-amber-300",
+                            )}
+                          />
+                          <p className="truncate font-semibold text-zinc-100">
+                            {displayName}
+                          </p>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <Badge
+                            className={cn(
+                              record.eventType === "entrada"
+                                ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+                                : "border-amber-300/20 bg-amber-300/10 text-amber-100",
+                              "hover:bg-inherit",
+                            )}
+                          >
+                            {record.eventType === "entrada" ? "Entrada" : "Salida"}
+                          </Badge>
+                          <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
+                            Turno {record.shift}
+                          </Badge>
+                        </div>
+                      </div>
+                      <p className="shrink-0 text-right text-sm text-zinc-400">
+                        {formatFullDateTime(record.recordedAt)}
                       </p>
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                      <Badge
-                        className={cn(
-                          record.eventType === "entrada"
-                            ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
-                            : "border-amber-300/20 bg-amber-300/10 text-amber-100",
-                          "hover:bg-inherit",
-                        )}
-                      >
-                        {record.eventType === "entrada" ? "Entrada" : "Salida"}
-                      </Badge>
-                      <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
-                        Turno {record.shift}
-                      </Badge>
-                    </div>
-                  </div>
-                  <p className="shrink-0 text-right text-sm text-zinc-400">
-                    {formatFullDateTime(record.recordedAt)}
-                  </p>
-                </div>
-              ))}
+                  );
+                })}
+              </div>
+              <PaginationControls
+                currentPage={recordsPage}
+                label={`${latestAttendance.length} registros`}
+                onPageChange={setRecordsPage}
+                totalItems={latestAttendance.length}
+              />
             </div>
-            <PaginationControls
-              currentPage={recordsPage}
-              label={`${latestAttendance.length} registros`}
-              onPageChange={setRecordsPage}
-              totalItems={latestAttendance.length}
-            />
-          </div>
+          )}
         </DarkPanel>
+        )}
       </div>
+      {pinRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-sm rounded-lg border border-white/10 bg-[#090d10] p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-zinc-100">
+              Confirmar {pinRequest.eventType === "entrada" ? "entrada" : "salida"}
+            </h3>
+            <p className="mt-1 text-sm text-zinc-400">{pinRequest.person.name}</p>
+            <input
+              autoFocus
+              className="mt-4 h-12 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-center text-lg font-semibold tracking-[0.3em] text-zinc-100 outline-none focus:border-cyan-300/60"
+              onChange={(event) => {
+                setPinValue(event.target.value);
+                setPinError("");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  void confirmPinAttendance();
+                }
+              }}
+              placeholder="PIN"
+              type="password"
+              value={pinValue}
+            />
+            {pinError && (
+              <p className="mt-2 text-sm font-semibold text-rose-200">{pinError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <Button
+                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                onClick={() => setPinRequest(null)}
+                type="button"
+                variant="outline"
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                onClick={confirmPinAttendance}
+                type="button"
+              >
+                Confirmar
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5310,6 +7659,7 @@ function HistorialEmpleadosView({
     shift: "",
     area: "",
     status: "Activo",
+    pin: "",
   };
   const emptyAttendance = (): AttendanceForm => ({
     employeeName: "",
@@ -5364,34 +7714,27 @@ function HistorialEmpleadosView({
           <PanelHeader
             icon={Users}
             title="Empleados"
-            subtitle="Alta y edicion del personal"
             right={
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                onClick={async () => {
-                  if (!isCreatingEmployee) {
-                    setIsCreatingEmployee(true);
-                    return;
-                  }
-
-                  const saved = await saveEmployee(newEmployee);
-                  if (saved) {
-                    setNewEmployee(emptyEmployee);
-                    setIsCreatingEmployee(false);
-                  }
+                onClick={() => {
+                  setNewEmployee(emptyEmployee);
+                  setEditingId(null);
+                  setIsCreatingEmployee(true);
                 }}
+                disabled={isCreatingEmployee}
                 size="sm"
                 type="button"
               >
                 <Plus className="size-4" />
-                {isCreatingEmployee ? "Guardar empleado" : "Agregar empleado"}
+                Agregar empleado
               </Button>
             }
           />
 
           {isCreatingEmployee && (
             <div className="border-b border-white/10 p-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                 <InlineInput
                   label="Nombre"
                   onChange={(value) => setNewEmployee((current) => ({ ...current, name: value }))}
@@ -5412,6 +7755,11 @@ function HistorialEmpleadosView({
                   onChange={(value) => setNewEmployee((current) => ({ ...current, area: value }))}
                   value={newEmployee.area}
                 />
+                <InlineInput
+                  label="PIN"
+                  onChange={(value) => setNewEmployee((current) => ({ ...current, pin: value }))}
+                  value={newEmployee.pin ?? ""}
+                />
                 <label className="text-xs font-semibold text-zinc-500">
                   Estado
                   <select
@@ -5431,6 +7779,19 @@ function HistorialEmpleadosView({
                 </label>
               </div>
               <div className="mt-3 flex justify-end gap-2">
+                <Button
+                  className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                  onClick={async () => {
+                    const saved = await saveEmployee(newEmployee);
+                    if (saved) {
+                      setNewEmployee(emptyEmployee);
+                      setIsCreatingEmployee(false);
+                    }
+                  }}
+                  type="button"
+                >
+                  Guardar empleado
+                </Button>
                 <Button
                   className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                   onClick={() => {
@@ -5454,7 +7815,7 @@ function HistorialEmpleadosView({
               >
                 {editingId === (person.id ?? person.name) ? (
                   <div className="space-y-4">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
                       <InlineInput
                         label="Nombre"
                         onChange={(value) =>
@@ -5482,6 +7843,13 @@ function HistorialEmpleadosView({
                           setEditingEmployee((current) => ({ ...current, area: value }))
                         }
                         value={editingEmployee.area}
+                      />
+                      <InlineInput
+                        label="PIN"
+                        onChange={(value) =>
+                          setEditingEmployee((current) => ({ ...current, pin: value }))
+                        }
+                        value={editingEmployee.pin ?? ""}
                       />
                       <label className="text-xs font-semibold text-zinc-500">
                         Estado
@@ -5533,7 +7901,7 @@ function HistorialEmpleadosView({
                     <div>
                       <p className="font-semibold text-zinc-100">{person.name}</p>
                       <p className="mt-1 text-sm text-zinc-400">
-                        {person.role} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ {person.area || "Sin sector"} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ {person.shift || "Sin turno"}
+                        {person.role} • {person.area || "Sin sector"} • {person.shift || "Sin turno"}
                       </p>
                     </div>
                     <Button
@@ -5564,32 +7932,20 @@ function HistorialEmpleadosView({
           <PanelHeader
             icon={CalendarClock}
             title="Fichajes"
-            subtitle="Historial completo y correcciones"
             right={
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                onClick={async () => {
-                  if (!isAttendanceFormOpen) {
-                    setAttendanceForm(emptyAttendance());
-                    setEditingAttendanceId(null);
-                    setIsCreatingAttendance(true);
-                    return;
-                  }
-
-                  const saved = await saveAttendanceRecord(attendanceForm);
-                  if (saved) {
-                    setAttendanceForm(emptyAttendance());
-                    setIsCreatingAttendance(false);
-                    setEditingAttendanceId(null);
-                  }
+                onClick={() => {
+                  setAttendanceForm(emptyAttendance());
+                  setEditingAttendanceId(null);
+                  setIsCreatingAttendance(true);
                 }}
+                disabled={isAttendanceFormOpen}
                 size="sm"
                 type="button"
               >
                 <Plus className="size-4" />
-                {isAttendanceFormOpen
-                  ? "Guardar fichaje"
-                  : "Agregar fichaje"}
+                Agregar fichaje
               </Button>
             }
           />
@@ -5654,7 +8010,7 @@ function HistorialEmpleadosView({
                     }
                     value={attendanceForm.shift}
                   >
-                    <option value="manana">MaÃƒÆ’Ã‚Â±ana</option>
+                    <option value="manana">Mañana</option>
                     <option value="tarde">Tarde</option>
                   </select>
                 </label>
@@ -5691,40 +8047,44 @@ function HistorialEmpleadosView({
           )}
 
           <div className="space-y-3 p-4">
-            {paginatedAttendance.map((record) => (
-              <div
-                className="flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-black/20 p-4"
-                key={record.id}
-              >
-                <div className="min-w-0">
-                  <p className="font-semibold text-zinc-100">{record.employeeName}</p>
-                  <p className="mt-1 text-sm text-zinc-400">
-                    {record.eventType === "entrada" ? "Entrada" : "Salida"} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ Turno{" "}
-                    {record.shift === "manana" ? "maÃƒÆ’Ã‚Â±ana" : "tarde"} ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢{" "}
-                    {formatFullDateTime(record.recordedAt)}
-                  </p>
-                </div>
-                <Button
-                  className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
-                  onClick={() => {
-                    setEditingAttendanceId(record.id);
-                    setIsCreatingAttendance(false);
-                    setAttendanceForm({
-                      id: record.id,
-                      staffId: record.staffId ?? null,
-                      employeeName: record.employeeName,
-                      eventType: record.eventType,
-                      shift: record.shift,
-                      recordedAt: formatDateTimeInputValue(record.recordedAt),
-                    });
-                  }}
-                  type="button"
-                  variant="outline"
+            {paginatedAttendance.map((record) => {
+              const displayName = getAttendanceDisplayName(record, staff);
+
+              return (
+                <div
+                  className="flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-black/20 p-4"
+                  key={record.id}
                 >
-                  Editar
-                </Button>
-              </div>
-            ))}
+                  <div className="min-w-0">
+                    <p className="font-semibold text-zinc-100">{displayName}</p>
+                    <p className="mt-1 text-sm text-zinc-400">
+                      {record.eventType === "entrada" ? "Entrada" : "Salida"} • Turno{" "}
+                      {record.shift === "manana" ? "mañana" : "tarde"} •{" "}
+                      {formatFullDateTime(record.recordedAt)}
+                    </p>
+                  </div>
+                  <Button
+                    className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+                    onClick={() => {
+                      setEditingAttendanceId(record.id);
+                      setIsCreatingAttendance(false);
+                      setAttendanceForm({
+                        id: record.id,
+                        staffId: record.staffId ?? null,
+                        employeeName: displayName,
+                        eventType: record.eventType,
+                        shift: record.shift,
+                        recordedAt: formatDateTimeInputValue(record.recordedAt),
+                      });
+                    }}
+                    type="button"
+                    variant="outline"
+                  >
+                    Editar
+                  </Button>
+                </div>
+              );
+            })}
             <PaginationControls
               currentPage={attendancePage}
               label={`${sortedAttendance.length} fichajes`}
@@ -5738,7 +8098,95 @@ function HistorialEmpleadosView({
   );
 }
 
+const formatAuditValue = (value: unknown) => {
+  if (typeof value === "number") return formatCurrency(value);
+  if (typeof value === "string") return value || "-";
+  if (value === null || typeof value === "undefined") return "-";
+  return JSON.stringify(value);
+};
+
+const getAuditDetailItems = (log: AuditLog): Array<[string, unknown]> => {
+  const detail = log.detail ?? {};
+
+  if (log.entity === "cierres_caja") {
+    return [
+      ["Turno", detail.turno === "manana" ? "Manana" : "Tarde"],
+      ["Ventas", String(detail.ventas ?? 0)],
+      ["Efectivo contado", formatCurrency(toNumber(detail.efectivo_contado as NumericValue))],
+      ["Diferencia", formatCurrency(Number(detail.diferencia ?? 0))],
+      ["Nota", detail.observacion],
+    ];
+  }
+
+  if (log.entity === "empleado") {
+    return [
+      ["Nombre", detail.nombre],
+      ["Rol", detail.rol],
+      ["Sector", detail.sector],
+    ];
+  }
+
+  return Object.entries(detail)
+    .filter(([key]) => !["creado_por", "sucursal_id"].includes(key))
+    .slice(0, 6)
+    .map(([key, value]) => [key.replace(/_/g, " "), value]);
+};
+
+function AuditoriaView({ auditLogs }: { auditLogs: AuditLog[] }) {
+  return (
+    <DarkPanel>
+      <PanelHeader icon={ReceiptText} title="Auditoria" />
+      <div className="space-y-3 p-4">
+        {auditLogs.length ? (
+          auditLogs.map((log) => {
+            const detailItems = getAuditDetailItems(log);
+
+            return (
+            <div
+              className="rounded-lg border border-white/10 bg-black/20 p-4"
+              key={log.id}
+            >
+              <div className="flex flex-col gap-4">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className="border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/10">
+                      {log.action}
+                    </Badge>
+                    <p className="font-semibold text-zinc-100">{log.entity}</p>
+                  </div>
+                  <p className="mt-2 text-sm text-zinc-400">
+                    {log.userName ?? "Sistema"} - {formatFullDateTime(log.createdAt)}
+                  </p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {detailItems.map(([label, value]) => (
+                    <div
+                      className="rounded-lg border border-white/10 bg-white/[0.03] p-3"
+                      key={String(label)}
+                    >
+                      <p className="text-xs uppercase text-zinc-500">{label}</p>
+                      <p className="mt-1 break-words text-sm font-semibold text-zinc-100">
+                        {formatAuditValue(value)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          );
+          })
+        ) : (
+          <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center">
+            <p className="text-sm text-zinc-500">Todavia no hay cambios guardados.</p>
+          </div>
+        )}
+      </div>
+    </DarkPanel>
+  );
+}
+
 function StockView({
+  canManageStock,
   closeFlavorBatch,
   deleteFlavor,
   deleteProduct,
@@ -5753,6 +8201,7 @@ function StockView({
   saveFlavor,
   unitsInStock,
 }: {
+  canManageStock: boolean;
   closeFlavorBatch: (batch: FlavorBatch, currentStock: number) => Promise<boolean>;
   deleteFlavor: (flavor: IceCreamFlavor) => void;
   deleteProduct: (product: Product) => void;
@@ -5814,6 +8263,10 @@ function StockView({
   const [productsPage, setProductsPage] = useState(1);
   const [isStockAlertOpen, setIsStockAlertOpen] = useState(false);
   const [isProductCategoryOpen, setIsProductCategoryOpen] = useState(false);
+  const [quickStockTarget, setQuickStockTarget] =
+    useState<QuickStockTarget | null>(null);
+  const [quickStockAmount, setQuickStockAmount] = useState("");
+  const [isQuickStockSaving, setIsQuickStockSaving] = useState(false);
   const activeBatchesByFlavor = new Map(
     flavorBatches
       .filter((batch) => batch.status === "activa")
@@ -5841,13 +8294,13 @@ function StockView({
       return matchesCategory && matchesQuery;
     })
     .sort((left, right) => {
-      const leftLow = left.stock <= left.minStock ? 0 : 1;
-      const rightLow = right.stock <= right.minStock ? 0 : 1;
+      const leftLow = isProductLowStock(left) ? 0 : 1;
+      const rightLow = isProductLowStock(right) ? 0 : 1;
       if (leftLow !== rightLow) return leftLow - rightLow;
       return left.name.localeCompare(right.name);
     });
   const visibleProducts = showOnlyLowProducts
-    ? filteredProducts.filter((product) => product.stock <= product.minStock)
+    ? filteredProducts.filter(isProductLowStock)
     : filteredProducts;
   const paginatedProducts = visibleProducts.slice(
     (productsPage - 1) * PAGE_SIZE,
@@ -5863,19 +8316,60 @@ function StockView({
       );
     })
     .sort((left, right) => {
-      const leftLow = left.stock <= left.minStock ? 0 : 1;
-      const rightLow = right.stock <= right.minStock ? 0 : 1;
+      const leftLow = isFlavorLowStock(left) ? 0 : 1;
+      const rightLow = isFlavorLowStock(right) ? 0 : 1;
       if (leftLow !== rightLow) return leftLow - rightLow;
       return left.name.localeCompare(right.name);
     });
   const visibleFlavors = showOnlyLowFlavors
-    ? filteredFlavors.filter((flavor) => flavor.stock <= flavor.minStock)
+    ? filteredFlavors.filter(isFlavorLowStock)
     : filteredFlavors;
   const flavorGroups = groupFlavorsByCategory(visibleFlavors);
 
   useEffect(() => {
     setProductsPage(1);
   }, [productCategory, productQuery, showOnlyLowProducts]);
+
+  const openQuickStock = (target: QuickStockTarget) => {
+    setQuickStockTarget(target);
+    setQuickStockAmount("");
+  };
+
+  const closeQuickStock = () => {
+    if (isQuickStockSaving) return;
+    setQuickStockTarget(null);
+    setQuickStockAmount("");
+  };
+
+  const quickStockIncrement = Math.max(0, Number(quickStockAmount || 0));
+  const quickStockCurrent = quickStockTarget?.item.stock ?? 0;
+  const quickStockNext = quickStockCurrent + quickStockIncrement;
+
+  const confirmQuickStock = async () => {
+    if (!quickStockTarget || quickStockIncrement <= 0) return;
+
+    setIsQuickStockSaving(true);
+    const saved =
+      quickStockTarget.type === "product"
+        ? await saveProduct(
+            {
+              ...quickStockTarget.item,
+              stock: quickStockNext,
+            },
+            quickStockTarget.item.stock,
+          )
+        : await saveFlavor({
+            ...quickStockTarget.item,
+            stock: quickStockNext,
+          });
+
+    setIsQuickStockSaving(false);
+
+    if (saved) {
+      setQuickStockTarget(null);
+      setQuickStockAmount("");
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -5911,7 +8405,7 @@ function StockView({
           <div className="space-y-4 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="font-semibold text-zinc-100">Alertas rapidas de stock</p>
+                <p className="font-semibold text-zinc-100">Alertas rápidas de stock</p>
                 <p className="mt-1 text-sm text-zinc-500">
                   {lowStock.length + lowFlavorStock.length} alerta
                   {lowStock.length + lowFlavorStock.length === 1 ? "" : "s"} entre
@@ -6012,13 +8506,19 @@ function StockView({
         </div>
       </DarkPanel>
 
+      {!canManageStock && (
+        <div className="rounded-lg border border-white/10 bg-black/20 px-4 py-3 text-sm text-zinc-400">
+          Esta vista es solo consulta para empleados. Los cambios de stock,
+          productos y gustos los hacen admin o dueño.
+        </div>
+      )}
+
       {stockTab === "gustos" && (
         <DarkPanel>
           <PanelHeader
             icon={Snowflake}
             title="Gustos"
-            subtitle="Cada venta de helado descuenta los gustos elegidos"
-            right={
+            right={canManageStock ? (
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
                 onClick={() => {
@@ -6032,7 +8532,7 @@ function StockView({
                 <Plus className="size-4" />
                 Agregar gusto
               </Button>
-            }
+            ) : null}
           />
           <div className="space-y-4 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -6062,18 +8562,7 @@ function StockView({
               </Button>
             </div>
 
-            {lowFlavorStock.length > 0 && (
-              <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 px-4 py-3">
-                <p className="font-semibold text-amber-100">
-                  {lowFlavorStock.length} gusto{lowFlavorStock.length === 1 ? "" : "s"} para reponer
-                </p>
-                <p className="mt-1 text-sm text-amber-50/80">
-                  UsÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ este filtro para ver rÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡pido los sabores que estÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡n bajos.
-                </p>
-              </div>
-            )}
-
-            {isCreatingFlavor && (
+            {canManageStock && isCreatingFlavor && (
               <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                   <InlineInput
@@ -6084,7 +8573,7 @@ function StockView({
                     value={newFlavor.name}
                   />
                   <InlineInput
-                    label="CategorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a"
+                    label="Categoría"
                     onChange={(value) =>
                       setNewFlavor((current) => ({ ...current, category: value }))
                     }
@@ -6102,7 +8591,7 @@ function StockView({
                     value={String(newFlavor.stock)}
                   />
                   <InlineInput
-                    label="Minimo"
+                    label="Mínimo"
                     onChange={(value) =>
                       setNewFlavor((current) => ({
                         ...current,
@@ -6177,13 +8666,32 @@ function StockView({
                   </div>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {group.items.map((flavor) => {
-                const isLow = flavor.stock <= flavor.minStock;
-                const isEditing = editingFlavorId === flavor.id && editingFlavor;
-                const activeBatch = activeBatchesByFlavor.get(flavor.id);
-                const latestClosedBatch = latestClosedBatchByFlavor.get(flavor.id);
-                const isLoadingBatch = batchFlavorId === flavor.id;
+                      const hasMinStock = flavor.minStock > 0;
+                      const isLow = isFlavorLowStock(flavor);
+                      const isOut = flavor.stock <= 0;
+                      const isEditing = editingFlavorId === flavor.id && editingFlavor;
+                      const activeBatch = activeBatchesByFlavor.get(flavor.id);
+                      const latestClosedBatch = latestClosedBatchByFlavor.get(flavor.id);
+                      const isLoadingBatch = batchFlavorId === flavor.id;
+                      const stockGap = Math.max(0, flavor.minStock - flavor.stock);
+                      const stockPercent =
+                        flavor.minStock > 0
+                          ? Math.min(
+                              100,
+                              Math.max(0, (flavor.stock / flavor.minStock) * 100),
+                            )
+                          : 100;
+                      const batchRemaining = activeBatch
+                        ? Math.max(0, Math.min(flavor.stock, activeBatch.portionsLoaded))
+                        : 0;
+                      const batchPercent = activeBatch?.portionsLoaded
+                        ? Math.min(
+                            100,
+                            Math.max(0, (batchRemaining / activeBatch.portionsLoaded) * 100),
+                          )
+                        : 0;
 
-                return (
+                      return (
                   <DarkPanel className="overflow-hidden" key={flavor.id}>
                     <div className="space-y-4 p-4">
                       <div className="flex items-start justify-between gap-3">
@@ -6202,13 +8710,19 @@ function StockView({
                           </div>
                           {activeBatch ? (
                             <p className="mt-1 text-xs text-cyan-200">
-                              Tanda activa: {activeBatch.kilos} kg / {activeBatch.portionsLoaded} porciones
+                              Balde activo: quedan {Math.round(batchRemaining)} de{" "}
+                              {Math.round(activeBatch.portionsLoaded)} {flavor.unit}
                             </p>
                           ) : latestClosedBatch?.suggestedYield ? (
                             <p className="mt-1 text-xs text-zinc-500">
-                              Sugerencia: {Math.round(latestClosedBatch.suggestedYield)} porciones
+                              Sin balde activo. Ultimo rindio{" "}
+                              {Math.round(latestClosedBatch.suggestedYield)} {flavor.unit}
                             </p>
-                          ) : null}
+                          ) : (
+                            <p className="mt-1 text-xs text-zinc-500">
+                              Sin balde activo
+                            </p>
+                          )}
                         </div>
                         <Badge
                           className={cn(
@@ -6218,7 +8732,13 @@ function StockView({
                             "hover:bg-inherit",
                           )}
                         >
-                          {isLow ? "Reponer" : "Disponible"}
+                          {isOut
+                            ? "Sin stock"
+                            : isLow
+                              ? `Faltan ${stockGap}`
+                              : hasMinStock
+                                ? "Disponible"
+                                : "Sin mínimo"}
                         </Badge>
                       </div>
 
@@ -6234,7 +8754,7 @@ function StockView({
                             value={editingFlavor.name}
                           />
                           <InlineInput
-                            label="CategorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a"
+                    label="Categoría"
                             onChange={(value) =>
                               setEditingFlavor((current) =>
                                 current ? { ...current, category: value } : current,
@@ -6253,7 +8773,7 @@ function StockView({
                             value={String(editingFlavor.stock)}
                           />
                           <InlineInput
-                            label="Minimo"
+                            label="Mínimo"
                             onChange={(value) =>
                               setEditingFlavor((current) =>
                                 current ? { ...current, minStock: Number(value || 0) } : current,
@@ -6273,31 +8793,101 @@ function StockView({
                           />
                         </div>
                       ) : (
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <p className="text-xs uppercase text-zinc-500">Stock</p>
-                            <p className="mt-1 font-semibold text-zinc-100">
-                              {flavor.stock} {flavor.unit}
+                        <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-xs uppercase text-zinc-500">Quedan</p>
+                              <p className="mt-1 text-xl font-semibold text-zinc-100">
+                                {Math.round(flavor.stock)} {flavor.unit}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-xs uppercase text-zinc-500">Avisar en</p>
+                              <p className="mt-1 font-semibold text-zinc-100">
+                                {hasMinStock
+                                  ? `${Math.round(flavor.minStock)} ${flavor.unit}`
+                                  : "Sin mínimo"}
+                              </p>
+                            </div>
+                          </div>
+                          {hasMinStock ? (
+                            <>
+                              <div className="h-2 rounded-full bg-white/10">
+                                <div
+                                  className={cn(
+                                    "h-2 rounded-full",
+                                    isLow ? "bg-amber-300" : "bg-emerald-300",
+                                  )}
+                                  style={{ width: `${Math.max(4, stockPercent)}%` }}
+                                />
+                              </div>
+                              <div className="flex items-center justify-between gap-3 text-xs text-zinc-500">
+                                <span>
+                                  {isLow ? "Necesita reposición" : "Stock suficiente"}
+                                </span>
+                                <span>{Math.round(stockPercent)}%</span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-zinc-400">
+                              Configurá un mínimo para que el sistema avise cuándo reponer.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {!isEditing && activeBatch && (
+                        <div className="space-y-3 rounded-lg border border-cyan-300/20 bg-cyan-300/10 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-semibold text-cyan-50">
+                              Balde activo
+                            </p>
+                            <p className="text-xs font-semibold text-cyan-50/80">
+                              {activeBatch.kilos} kg
                             </p>
                           </div>
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <p className="text-xs uppercase text-zinc-500">Minimo</p>
-                            <p className="mt-1 font-semibold text-zinc-100">
-                              {flavor.minStock} {flavor.unit}
-                            </p>
+                          <div className="h-2 rounded-full bg-black/30">
+                            <div
+                              className={cn(
+                                "h-2 rounded-full",
+                                batchPercent <= 20 ? "bg-amber-300" : "bg-cyan-300",
+                              )}
+                              style={{ width: `${Math.max(4, batchPercent)}%` }}
+                            />
                           </div>
-                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                            <p className="text-xs uppercase text-zinc-500">Unidad</p>
-                            <p className="mt-1 font-semibold text-zinc-100">{flavor.unit}</p>
+                          <div className="grid gap-3 text-sm sm:grid-cols-3">
+                            <div>
+                              <p className="text-xs uppercase text-cyan-100/70">Cargado</p>
+                              <p className="mt-1 font-semibold text-zinc-100">
+                                {Math.round(activeBatch.portionsLoaded)} {flavor.unit}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs uppercase text-cyan-100/70">Vendido</p>
+                              <p className="mt-1 font-semibold text-zinc-100">
+                                {Math.max(
+                                  0,
+                                  Math.round(activeBatch.portionsLoaded - batchRemaining),
+                                )}{" "}
+                                {flavor.unit}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs uppercase text-cyan-100/70">Queda</p>
+                              <p className="mt-1 font-semibold text-zinc-100">
+                                {Math.round(batchRemaining)} {flavor.unit}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       )}
 
-                      <div className="flex flex-wrap gap-2">
+                      {canManageStock && (
+                      <div className="flex flex-wrap items-center gap-2">
                         {isEditing ? (
                           <>
                             <Button
-                              className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                              className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
                               onClick={async () => {
                                 const saved = await saveFlavor(editingFlavor);
                                 if (saved) {
@@ -6326,28 +8916,6 @@ function StockView({
                           </>
                         ) : (
                           <>
-                            <Button
-                              className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
-                              onClick={() => {
-                                setEditingFlavorId(flavor.id);
-                                setEditingFlavor(flavor);
-                              }}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              Editar
-                            </Button>
-                            <Button
-                              className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
-                              onClick={() => deleteFlavor(flavor)}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              <Trash2 className="size-4" />
-                              Eliminar
-                            </Button>
                             {activeBatch ? (
                               <Button
                                 className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
@@ -6358,11 +8926,11 @@ function StockView({
                                 type="button"
                                 variant="outline"
                               >
-                                Se termino
+                                Cerrar balde
                               </Button>
                             ) : (
                               <Button
-                                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                                className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
                                 onClick={() => {
                                   setBatchFlavorId((current) =>
                                     current === flavor.id ? null : flavor.id,
@@ -6378,53 +8946,105 @@ function StockView({
                                 type="button"
                                 variant="outline"
                               >
+                                <Plus className="size-4" />
                                 Cargar balde
                               </Button>
                             )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <MoreHorizontal className="size-4" />
+                                  Más
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align="end"
+                                className="border-white/10 bg-[#111517] text-zinc-100"
+                              >
+                                <DropdownMenuItem
+                                  className="cursor-pointer focus:bg-white/10"
+                                  onClick={() => {
+                                    setEditingFlavorId(flavor.id);
+                                    setEditingFlavor(flavor);
+                                  }}
+                                >
+                                  Editar gusto
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator className="bg-white/10" />
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-rose-100 focus:bg-rose-300/10 focus:text-rose-100"
+                                  onClick={() => deleteFlavor(flavor)}
+                                >
+                                  <Trash2 className="size-4" />
+                                  Eliminar gusto
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </>
                         )}
                       </div>
+                      )}
 
-                      {isLoadingBatch && !activeBatch && (
-                        <div className="grid gap-3 rounded-lg border border-white/10 bg-black/20 p-3 md:grid-cols-[1fr_1fr_auto_auto]">
-                          <InlineInput
-                            label="Kilos del balde"
-                            onChange={setBatchKilos}
-                            type="number"
-                            value={batchKilos}
-                          />
-                          <InlineInput
-                            label="Porciones estimadas"
-                            onChange={setBatchPortions}
-                            type="number"
-                            value={batchPortions}
-                          />
-                          <Button
-                            className="self-end bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                            onClick={async () => {
-                              const saved = await loadFlavorBatch(
-                                flavor,
-                                Number(batchKilos || 0),
-                                Number(batchPortions || 0),
-                              );
-                              if (saved) {
-                                setBatchFlavorId(null);
-                                setBatchKilos("20");
-                                setBatchPortions("160");
-                              }
-                            }}
-                            type="button"
-                          >
-                            Guardar tanda
-                          </Button>
-                          <Button
-                            className="self-end border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                            onClick={() => setBatchFlavorId(null)}
-                            type="button"
-                            variant="outline"
-                          >
-                            Cancelar
-                          </Button>
+                      {canManageStock && isLoadingBatch && !activeBatch && (
+                        <div className="space-y-3 rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-emerald-50">
+                                Reponer balde
+                              </p>
+                              <p className="mt-1 text-xs text-emerald-50/70">
+                                Carga el rendimiento estimado y suma esas porciones al stock.
+                              </p>
+                            </div>
+                            <Badge className="border-emerald-300/20 bg-black/20 text-emerald-100 hover:bg-black/20">
+                              {flavor.name}
+                            </Badge>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto_auto]">
+                            <InlineInput
+                              label="Kilos"
+                              onChange={setBatchKilos}
+                              type="number"
+                              value={batchKilos}
+                            />
+                            <InlineInput
+                              label="Porciones que rinde"
+                              onChange={setBatchPortions}
+                              type="number"
+                              value={batchPortions}
+                            />
+                            <Button
+                              className="self-end bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                              onClick={async () => {
+                                const saved = await loadFlavorBatch(
+                                  flavor,
+                                  Number(batchKilos || 0),
+                                  Number(batchPortions || 0),
+                                );
+                                if (saved) {
+                                  setBatchFlavorId(null);
+                                  setBatchKilos("20");
+                                  setBatchPortions("160");
+                                }
+                              }}
+                              type="button"
+                            >
+                              Cargar balde
+                            </Button>
+                            <Button
+                              className="self-end border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                              onClick={() => setBatchFlavorId(null)}
+                              type="button"
+                              variant="outline"
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -6444,8 +9064,7 @@ function StockView({
           <PanelHeader
             icon={Package}
             title="Productos"
-            subtitle="Alta, edicion y control de stock"
-            right={
+            right={canManageStock ? (
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
                 onClick={() => {
@@ -6458,7 +9077,7 @@ function StockView({
                 <Plus className="size-4" />
                 Agregar producto
               </Button>
-            }
+            ) : null}
           />
           <div className="space-y-4 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -6479,7 +9098,7 @@ function StockView({
                   type="button"
                   variant="outline"
                 >
-                  CategorÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â­a
+                  Categoría
                   {productCategory !== "Todas" ? `: ${productCategory}` : ""}
                 </Button>
                 <Button
@@ -6523,7 +9142,7 @@ function StockView({
               </div>
             )}
 
-            {isCreatingProduct && (
+            {canManageStock && isCreatingProduct && (
               <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
                 <ProductFields product={newProduct} setProduct={setNewProduct} />
                 <div className="flex flex-wrap justify-end gap-2">
@@ -6558,7 +9177,7 @@ function StockView({
 
             <div className="grid gap-3 xl:grid-cols-2">
               {paginatedProducts.map((product) => {
-                const isLow = product.stock <= product.minStock;
+                const isLow = isProductLowStock(product);
                 const isEditing = editingId === product.id;
 
                 return (
@@ -6590,12 +9209,13 @@ function StockView({
                         </Badge>
                       </div>
 
-                      {isEditing ? (
+                      {canManageStock && isEditing ? (
                         <div className="space-y-3">
                           <ProductFields
                             product={editingProduct}
                             setProduct={setEditingProduct}
                           />
+                          {canManageStock && (
                           <div className="flex flex-wrap gap-2">
                             <Button
                               className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
@@ -6622,6 +9242,7 @@ function StockView({
                               Cancelar
                             </Button>
                           </div>
+                          )}
                         </div>
                       ) : (
                         <>
@@ -6633,7 +9254,7 @@ function StockView({
                               </p>
                             </div>
                             <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                              <p className="text-xs uppercase text-zinc-500">Minimo</p>
+                              <p className="text-xs uppercase text-zinc-500">Mínimo</p>
                               <p className="mt-1 font-semibold text-zinc-100">
                                 {product.minStock} {product.unit}
                               </p>
@@ -6648,27 +9269,52 @@ function StockView({
 
                           <div className="flex flex-wrap gap-2">
                             <Button
-                              className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
-                              onClick={() => {
-                                setEditingId(product.id);
-                                setEditingProduct(product);
-                              }}
+                              className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                              onClick={() =>
+                                openQuickStock({ item: product, type: "product" })
+                              }
                               size="sm"
                               type="button"
                               variant="outline"
                             >
-                              Editar
+                              <Plus className="size-4" />
+                              Sumar stock
                             </Button>
-                            <Button
-                              className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
-                              onClick={() => deleteProduct(product)}
-                              size="sm"
-                              type="button"
-                              variant="outline"
-                            >
-                              <Trash2 className="size-4" />
-                              Eliminar
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                                  size="sm"
+                                  type="button"
+                                  variant="outline"
+                                >
+                                  <MoreHorizontal className="size-4" />
+                                  Más
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align="end"
+                                className="border-white/10 bg-[#111517] text-zinc-100"
+                              >
+                                <DropdownMenuItem
+                                  className="cursor-pointer focus:bg-white/10"
+                                  onClick={() => {
+                                    setEditingId(product.id);
+                                    setEditingProduct(product);
+                                  }}
+                                >
+                                  Editar producto
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator className="bg-white/10" />
+                                <DropdownMenuItem
+                                  className="cursor-pointer text-rose-100 focus:bg-rose-300/10 focus:text-rose-100"
+                                  onClick={() => deleteProduct(product)}
+                                >
+                                  <Trash2 className="size-4" />
+                                  Eliminar producto
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </>
                       )}
@@ -6685,6 +9331,89 @@ function StockView({
             />
           </div>
         </DarkPanel>
+      )}
+
+      {quickStockTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl">
+            <PanelHeader
+              icon={Plus}
+              title="Reponer stock"
+            />
+            <div className="space-y-4 p-4">
+              <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-[var(--erp-muted)]">
+                      Producto
+                    </p>
+                    <p className="mt-1 text-lg font-semibold text-[var(--erp-text)]">
+                      {quickStockTarget.item.name}
+                    </p>
+                  </div>
+                  <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
+                    {quickStockTarget.item.unit}
+                  </Badge>
+                </div>
+              </div>
+
+              <label className="block text-xs font-semibold uppercase text-[var(--erp-muted)]">
+                Cantidad que entra
+                <input
+                  autoFocus
+                  className="mt-2 h-12 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-lg font-semibold text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-emerald-300/60"
+                  min={0}
+                  onChange={(event) => setQuickStockAmount(event.target.value)}
+                  placeholder="Ej: 10"
+                  step="any"
+                  type="number"
+                  value={quickStockAmount}
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs uppercase text-[var(--erp-muted)]">Actual</p>
+                  <p className="mt-1 text-xl font-semibold text-[var(--erp-text)]">
+                    {quickStockCurrent}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-3">
+                  <p className="text-xs uppercase text-emerald-100/70">Entra</p>
+                  <p className="mt-1 text-xl font-semibold text-emerald-100">
+                    +{quickStockIncrement}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 p-3">
+                  <p className="text-xs uppercase text-cyan-100/70">Final</p>
+                  <p className="mt-1 text-xl font-semibold text-cyan-100">
+                    {quickStockNext}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  disabled={isQuickStockSaving}
+                  onClick={closeQuickStock}
+                  type="button"
+                  variant="outline"
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                  disabled={quickStockIncrement <= 0 || isQuickStockSaving}
+                  onClick={confirmQuickStock}
+                  type="button"
+                >
+                  {isQuickStockSaving ? "Guardando..." : "Guardar reposición"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -6736,7 +9465,7 @@ function ProductFields({
         value={String(product.stock)}
       />
       <InlineInput
-        label="Minimo"
+        label="Mínimo"
         onChange={(value) =>
           setProduct((current) => ({ ...current, minStock: Number(value || 0) }))
         }
@@ -6770,11 +9499,13 @@ function ProductFields({
         type="number"
         value={String(product.flavorUsage)}
       />
-      <InlineInput
-        label="Imagen URL"
+      <ImageUploadControl
+        carpeta="productos"
+        label="Imagen del producto"
         onChange={(value) =>
           setProduct((current) => ({ ...current, imageUrl: value }))
         }
+        tipo="producto"
         value={product.imageUrl}
       />
     </div>
@@ -6803,6 +9534,109 @@ function InlineInput({
         value={value}
       />
     </label>
+  );
+}
+
+function ImageUploadControl({
+  carpeta,
+  label,
+  onChange,
+  tipo,
+  value,
+}: {
+  carpeta: string;
+  label: string;
+  onChange: (value: string) => void;
+  tipo: "producto" | "logo" | "favicon";
+  value: string;
+}) {
+  const [isUploading, setIsUploading] = useState(false);
+  const [error, setError] = useState("");
+
+  const uploadImage = async (file: File) => {
+    setError("");
+    setIsUploading(true);
+
+    const formData = new FormData();
+    formData.append("archivo", file);
+    formData.append("carpeta", carpeta);
+    formData.append("tipo", tipo);
+
+    const response = await fetch("/api/erp/imagenes", {
+      method: "POST",
+      body: formData,
+    }).catch(() => null);
+
+    setIsUploading(false);
+
+    if (!response?.ok) {
+      const data = (await response?.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      setError(data?.error ?? "No se pudo subir la imagen");
+      return;
+    }
+
+    const data = (await response.json()) as {
+      bytes?: number;
+      url?: string;
+    };
+
+    if (data.url) {
+      onChange(data.url);
+    }
+  };
+
+  return (
+    <div className="text-xs font-semibold text-zinc-500">
+      {label}
+      <div className="mt-1 rounded-lg border border-white/10 bg-[#080a0c] p-3">
+        {value ? (
+          <div className="mb-3 flex items-center gap-3">
+            <div
+              className="size-14 shrink-0 rounded-lg border border-white/10 bg-cover bg-center"
+              style={{ backgroundImage: `url("${value}")` }}
+            />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-zinc-200">
+                Imagen optimizada en Supabase
+              </p>
+              <p className="truncate text-xs font-normal text-zinc-500">{value}</p>
+            </div>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={() => onChange("")}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Quitar
+            </Button>
+          </div>
+        ) : (
+          <p className="mb-3 text-xs font-normal text-zinc-500">
+            Se sube a Supabase Storage y se optimiza automáticamente.
+          </p>
+        )}
+        <label className="flex h-10 cursor-pointer items-center justify-center rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20">
+          {isUploading ? "Optimizando..." : "Elegir imagen"}
+          <input
+            accept="image/avif,image/jpeg,image/png,image/webp"
+            className="sr-only"
+            disabled={isUploading}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) {
+                void uploadImage(file);
+              }
+            }}
+            type="file"
+          />
+        </label>
+        {error && <p className="mt-2 text-xs font-normal text-rose-200">{error}</p>}
+      </div>
+    </div>
   );
 }
 
@@ -6955,6 +9789,419 @@ function HelpModal({
   );
 }
 
+function BrandLogo({
+  className,
+  iconClassName,
+  theme,
+}: {
+  className?: string;
+  iconClassName?: string;
+  theme: ThemeSettings;
+}) {
+  const imageUrl = getBrandLogoUrl(theme);
+  const Icon = getBrandIconOption(theme.brandIcon)?.icon ?? Snowflake;
+
+  return (
+    <div
+      className={cn(
+        "flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
+        className,
+      )}
+    >
+      {imageUrl ? (
+        <div
+          aria-label="Logo"
+          className="size-full bg-cover bg-center"
+          role="img"
+          style={{ backgroundImage: `url("${imageUrl}")` }}
+        />
+      ) : (
+        <Icon className={cn("size-6", iconClassName)} />
+      )}
+    </div>
+  );
+}
+
+function DisenoView({
+  isSaving,
+  onApplyPreset,
+  onReset,
+  onSave,
+  onUpdate,
+  theme,
+}: {
+  isSaving: boolean;
+  onApplyPreset: (
+    preset: ThemeColorPreset,
+    options: ApplyThemePresetOptions,
+  ) => void;
+  onReset: () => void;
+  onSave: () => void;
+  onUpdate: (key: keyof ThemeSettings, value: string) => void;
+  theme: ThemeSettings;
+}) {
+  const [applyPresetTypography, setApplyPresetTypography] = useState(true);
+
+  return (
+    <div className="space-y-5">
+      <DarkPanel>
+        <PanelHeader
+          icon={Palette}
+          right={
+            <div className="flex flex-wrap gap-2">
+              <Button
+                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                disabled={isSaving}
+                onClick={onReset}
+                type="button"
+                variant="outline"
+              >
+                Restablecer
+              </Button>
+              <Button
+                className="bg-[var(--erp-primary)] text-[var(--erp-primary-text)] hover:opacity-90"
+                disabled={isSaving}
+                onClick={onSave}
+                type="button"
+              >
+                {isSaving ? "Guardando..." : "Guardar diseño"}
+              </Button>
+            </div>
+          }
+          subtitle="Cambia colores y tipografía de la página"
+          title="Diseño"
+        />
+
+        <div className="grid gap-5 p-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-4 rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
+              <div>
+                <p className="font-semibold text-[var(--erp-text)]">
+                  Nombre e identidad
+                </p>
+                <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                  Cambia el nombre del local, el texto superior, el logo y el icono de la pestaña.
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-[var(--erp-muted)]">
+                  Nombre de la página
+                  <input
+                    className="mt-1 h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
+                    onChange={(event) => onUpdate("brandName", event.target.value)}
+                    value={theme.brandName}
+                  />
+                </label>
+                <label className="text-xs font-semibold text-[var(--erp-muted)]">
+                  Texto superior
+                  <input
+                    className="mt-1 h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
+                    onChange={(event) => onUpdate("brandSubtitle", event.target.value)}
+                    value={theme.brandSubtitle}
+                  />
+                </label>
+              </div>
+
+              <label className="block text-xs font-semibold text-[var(--erp-muted)]">
+                Tipografía del nombre
+                <select
+                  className="mt-1 h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
+                  onChange={(event) => onUpdate("brandFontFamily", event.target.value)}
+                  value={theme.brandFontFamily}
+                >
+                  {fontOptions.map((option) => (
+                    <option
+                      className="bg-zinc-950 text-zinc-100"
+                      key={`brand-${option.value}`}
+                      value={option.value}
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                  <option className="bg-zinc-950 text-zinc-100" value={BRAND_FONT_FAMILY}>
+                    Estilo logo clásico
+                  </option>
+                </select>
+              </label>
+
+              <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                  <p className="text-xs font-semibold uppercase text-[var(--erp-muted)]">
+                    Logo del sistema
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {[
+                      { id: "icon", label: "Icono" },
+                      { id: "image", label: "Imagen" },
+                    ].map((option) => (
+                      <button
+                        className={cn(
+                          "rounded-lg border px-3 py-2 text-xs font-semibold transition",
+                          theme.brandLogoMode === option.id
+                            ? "border-[var(--erp-primary)] bg-[var(--erp-primary)] text-[var(--erp-primary-text)]"
+                            : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
+                        )}
+                        key={option.id}
+                        onClick={() => onUpdate("brandLogoMode", option.id)}
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {theme.brandLogoMode === "icon" ? (
+                    <select
+                      className="mt-3 h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
+                      onChange={(event) => onUpdate("brandIcon", event.target.value)}
+                      value={theme.brandIcon}
+                    >
+                      {brandIconOptions.map((option) => (
+                        <option
+                          className="bg-zinc-950 text-zinc-100"
+                          key={option.id}
+                          value={option.id}
+                        >
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="mt-3">
+                      <ImageUploadControl
+                        carpeta="marca"
+                        label="Imagen del logo"
+                        onChange={(value) => onUpdate("brandImageUrl", value)}
+                        tipo="logo"
+                        value={theme.brandImageUrl}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                  <ImageUploadControl
+                    carpeta="marca"
+                    label="Icono de pestaña"
+                    onChange={(value) => onUpdate("faviconUrl", value)}
+                    tipo="favicon"
+                    value={theme.faviconUrl}
+                  />
+                  <p className="mt-2 text-xs font-normal text-[var(--erp-muted)]">
+                    Si lo dejás vacío, se usa la imagen del logo o una inicial automática.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="font-semibold text-[var(--erp-text)]">
+                    Diseños rápidos
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                    Tocá un estilo para cambiar todos los colores juntos.
+                  </p>
+                </div>
+                <label className="flex w-fit cursor-pointer items-center gap-2 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel-alt)] px-3 py-2 text-xs font-semibold text-[var(--erp-text)]">
+                  <input
+                    checked={applyPresetTypography}
+                    className="size-4 accent-[var(--erp-primary)]"
+                    onChange={(event) =>
+                      setApplyPresetTypography(event.target.checked)
+                    }
+                    type="checkbox"
+                  />
+                  Aplicar tipografía
+                </label>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                {themeColorPresets.map((preset) => {
+                  const isActive = isThemeColorPresetActive(theme, preset);
+
+                  return (
+                    <button
+                      className={cn(
+                        "group rounded-lg border p-3 text-left transition hover:-translate-y-0.5 hover:bg-white/5",
+                        isActive
+                          ? "border-[var(--erp-primary)] bg-white/5"
+                          : "border-white/10 bg-black/25",
+                      )}
+                      key={preset.id}
+                      onClick={() =>
+                        onApplyPreset(preset, {
+                          includeTypography: applyPresetTypography,
+                        })
+                      }
+                      type="button"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-[var(--erp-text)]">
+                            {preset.name}
+                          </p>
+                          <p className="mt-1 text-xs text-[var(--erp-muted)]">
+                            {preset.description}
+                          </p>
+                          <p
+                            className="mt-2 text-[11px] font-semibold uppercase text-[var(--erp-primary)]"
+                            style={{ fontFamily: preset.typography.fontFamily }}
+                          >
+                            {getFontOptionLabel(preset.typography.fontFamily)}
+                          </p>
+                        </div>
+                        {isActive && (
+                          <span className="shrink-0 rounded-full bg-[var(--erp-primary)] px-2 py-1 text-[10px] font-bold uppercase text-[var(--erp-primary-text)]">
+                            Activo
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="mt-4 grid grid-cols-6 gap-1.5">
+                        {presetSwatchKeys.map((key) => (
+                          <span
+                            aria-hidden="true"
+                            className="h-8 rounded-md border border-white/10 shadow-inner"
+                            key={key}
+                            style={{ backgroundColor: preset.colors[key] }}
+                          />
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <label className="rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <p className="font-semibold text-[var(--erp-text)]">
+                    Tipografía
+                  </p>
+                  <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                    Cambia la letra de toda la página y se guarda con el diseño.
+                  </p>
+                </div>
+                <Badge className="w-fit border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/10">
+                  {getFontOptionLabel(theme.fontFamily)}
+                </Badge>
+              </div>
+              <select
+                className="mt-3 h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
+                onChange={(event) => onUpdate("fontFamily", event.target.value)}
+                value={theme.fontFamily}
+              >
+                {fontOptions.map((option) => (
+                  <option
+                    className="bg-zinc-950 text-zinc-100"
+                    key={option.value}
+                    value={option.value}
+                  >
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p
+                className="mt-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-[var(--erp-text)]"
+                style={{ fontFamily: theme.fontFamily }}
+              >
+                Vista de ejemplo: Caja, análisis, stock y empleados.
+              </p>
+            </label>
+
+            {themeFields.map((field) => (
+              <label
+                className="rounded-lg border border-[var(--erp-border)] bg-black/20 p-4"
+                key={field.key}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-[var(--erp-text)]">
+                      {field.label}
+                    </p>
+                    <p className="mt-1 text-sm text-[var(--erp-muted)]">
+                      {field.description}
+                    </p>
+                  </div>
+                  <input
+                    className="h-10 w-12 cursor-pointer rounded-md border border-white/10 bg-transparent p-1"
+                    onChange={(event) => onUpdate(field.key, event.target.value)}
+                    type="color"
+                    value={theme[field.key].startsWith("#") ? theme[field.key] : "#000000"}
+                  />
+                </div>
+                <input
+                  className="mt-3 h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
+                  onChange={(event) => onUpdate(field.key, event.target.value)}
+                  value={theme[field.key]}
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-bg)] p-4">
+              <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-header)] p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--erp-primary)]">
+                  {theme.brandSubtitle}
+                </p>
+                <h3
+                  className="mt-2 text-4xl leading-none text-[var(--erp-text)]"
+                  style={{ fontFamily: theme.brandFontFamily }}
+                >
+                  {theme.brandName}
+                </h3>
+              </div>
+              <div className="mt-4 grid gap-3 sm:grid-cols-[160px_1fr]">
+                <div className="rounded-lg bg-[var(--erp-sidebar)] p-3">
+                  <div className="flex items-center gap-2 rounded-lg bg-[var(--erp-primary)] px-3 py-2 text-sm font-semibold text-[var(--erp-primary-text)]">
+                    <BrandLogo className="size-8 rounded-md" iconClassName="size-4" theme={theme} />
+                    <span>Caja</span>
+                  </div>
+                  <div className="mt-2 rounded-lg px-3 py-2 text-sm text-[var(--erp-muted)]">
+                    Stock
+                  </div>
+                </div>
+                <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] p-4">
+                  <p className="text-sm text-[var(--erp-muted)]">Panel principal</p>
+                  <p className="mt-2 text-xl font-semibold text-[var(--erp-text)]">
+                    Total vendido
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <span className="rounded-lg bg-[var(--erp-primary)] px-3 py-2 text-sm font-semibold text-[var(--erp-primary-text)]">
+                      Botón principal
+                    </span>
+                    <span className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel-alt)] px-3 py-2 text-sm text-[var(--erp-text)]">
+                      Botón secundario
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <DarkPanel>
+              <div className="p-4">
+                <p className="font-semibold text-[var(--erp-text)]">
+                  Cómo se guarda
+                </p>
+                <p className="mt-2 text-sm text-[var(--erp-muted)]">
+                  Los cambios se ven al instante. Cuando tocás Guardar diseño,
+                  quedan guardados para que la página mantenga ese diseño al
+                  volver a entrar.
+                </p>
+              </div>
+            </DarkPanel>
+          </div>
+        </div>
+      </DarkPanel>
+    </div>
+  );
+}
+
 function DarkPanel({
   children,
   className,
@@ -6963,7 +10210,7 @@ function DarkPanel({
   className?: string;
 }) {
   return (
-    <div className={cn("rounded-lg border border-white/10 bg-[#0f1213] shadow-2xl", className)}>
+    <div className={cn("rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl", className)}>
       {children}
     </div>
   );
@@ -6977,18 +10224,18 @@ function PanelHeader({
 }: {
   icon: LucideIcon;
   right?: React.ReactNode;
-  subtitle: string;
+  subtitle?: string;
   title: string;
 }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 border-b border-[var(--erp-border)] p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
-        <div className="flex size-10 items-center justify-center rounded-lg bg-white/5 text-cyan-200">
+        <div className="flex size-10 items-center justify-center rounded-lg bg-white/5 text-[var(--erp-primary)]">
           <Icon className="size-5" />
         </div>
         <div>
-          <h2 className="font-semibold text-zinc-100">{title}</h2>
-          {subtitle && <p className="text-sm text-zinc-500">{subtitle}</p>}
+          <h2 className="font-semibold text-[var(--erp-text)]">{title}</h2>
+          {subtitle && <p className="text-sm text-[var(--erp-muted)]">{subtitle}</p>}
         </div>
       </div>
       {right}
@@ -7016,16 +10263,16 @@ function MetricCard({
   };
 
   return (
-    <div className="rounded-lg border border-white/10 bg-[#0f1213] p-4 shadow-2xl">
+    <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] p-3 shadow-2xl">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm text-zinc-500">{label}</p>
-          <p className="mt-3 text-2xl font-semibold tracking-normal text-zinc-100">
+        <div className="min-w-0">
+          <p className="text-xs text-zinc-500">{label}</p>
+          <p className="mt-2 text-xl font-semibold tracking-normal text-zinc-100">
             {value}
           </p>
         </div>
-        <div className={cn("flex size-10 items-center justify-center rounded-lg border", toneClass[tone])}>
-          <Icon className="size-5" />
+        <div className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border", toneClass[tone])}>
+          <Icon className="size-4" />
         </div>
       </div>
     </div>
@@ -7043,15 +10290,19 @@ function ShiftCard({
 }) {
   return (
     <div className="rounded-lg border border-white/10 bg-black/20 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm text-zinc-500">Gana por la {label.toLowerCase()}</p>
-          <p className="mt-2 text-3xl font-semibold text-zinc-100">
+      <div className="flex flex-col gap-4">
+        <div className="flex items-start justify-between gap-3">
+          <p className="min-w-0 text-sm text-zinc-500">
+            Gana por la {label.toLowerCase()}
+          </p>
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-cyan-300/10 text-cyan-200">
+            <Icon className="size-5" />
+          </div>
+        </div>
+        <div className="min-w-0">
+          <p className="break-words text-2xl font-semibold leading-tight tracking-normal text-zinc-100">
             {formatCurrency(value)}
           </p>
-        </div>
-        <div className="flex size-11 items-center justify-center rounded-lg bg-cyan-300/10 text-cyan-200">
-          <Icon className="size-5" />
         </div>
       </div>
     </div>

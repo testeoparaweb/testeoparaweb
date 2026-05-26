@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 
+import { requireRoles } from "@/lib/auth/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno", "empleado"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as Record<string, unknown>;
     const supabase = createAdminClient();
 
@@ -28,6 +32,9 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const permission = await requireRoles(["admin", "dueno"]);
+    if (!permission.ok) return permission.response;
+
     const body = (await request.json()) as Record<string, unknown>;
     const supabase = createAdminClient();
 
