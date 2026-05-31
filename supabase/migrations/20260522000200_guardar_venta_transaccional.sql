@@ -23,6 +23,10 @@ begin
     raise exception 'La venta no tiene items';
   end if;
 
+  if exists (select 1 from public.ventas where id = venta_id) then
+    return jsonb_build_object('ok', true, 'venta_id', venta_id, 'repetida', true);
+  end if;
+
   insert into public.ventas (
     id,
     sucursal_id,

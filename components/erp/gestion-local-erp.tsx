@@ -26,6 +26,7 @@ import {
   Palette,
   Plus,
   ReceiptText,
+  RefreshCw,
   Search,
   ShoppingCart,
   Snowflake,
@@ -36,6 +37,7 @@ import {
   Trash2,
   Users,
   WalletCards,
+  X,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -49,11 +51,61 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { UserAdminModal } from "@/components/user-admin-modal";
 import type { SessionUser, UserRole } from "@/lib/auth/user";
+import {
+  countOfflineCashCloses,
+  countOfflineJsonMutations,
+  countOfflineSales,
+  enqueueOfflineCashClose,
+  enqueueOfflineJsonMutation,
+  enqueueOfflineSale,
+  getOfflineCashCloses,
+  getOfflineJsonMutations,
+  getOfflineSales,
+  removeOfflineCashClose,
+  removeOfflineJsonMutation,
+  removeOfflineSale,
+  type OfflineCashClosePayload,
+  type OfflineCashCloseRecord,
+  type OfflineJsonMutationRecord,
+  type OfflineSalePayload,
+  type OfflineSaleRecord,
+} from "@/lib/offline-sales";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
+type DesktopUpdaterStatus =
+  | "unsupported"
+  | "idle"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "downloading"
+  | "downloaded"
+  | "error";
+
+type DesktopUpdaterState = {
+  currentVersion?: string;
+  message?: string;
+  progress?: number;
+  status: DesktopUpdaterStatus;
+  version?: string;
+};
+
+declare global {
+  interface Window {
+    cajaUpdater?: {
+      check: () => Promise<DesktopUpdaterState>;
+      download: () => Promise<DesktopUpdaterState>;
+      getStatus: () => Promise<DesktopUpdaterState>;
+      install: () => Promise<void>;
+      onStatus: (callback: (status: DesktopUpdaterState) => void) => () => void;
+    };
+  }
+}
+
 type ViewId =
   | "inicio"
+  | "cierre-caja"
   | "caja"
   | "ventas"
   | "analisis"
@@ -75,6 +127,18 @@ type HelpSection = {
   title: string;
   description: string;
   details: string[];
+};
+type ViewHelpContent = {
+  title: string;
+  summary: string;
+  sections: HelpSection[];
+};
+type HelpGuideGroup = {
+  label: string;
+  items: Array<{
+    help: ViewHelpContent;
+    item: NavItem;
+  }>;
 };
 
 type ThemeSettings = {
@@ -215,6 +279,18 @@ type ExpenseHistory = {
   startsAt: string;
   total: number;
   expenses: Expense[];
+};
+
+type CommissionMethod = {
+  name: string;
+  rate: number;
+};
+
+type CommissionHistory = {
+  id: string;
+  startsAt: string;
+  channels: Record<SaleChannel, number>;
+  methods: CommissionMethod[];
 };
 
 type FlavorBatch = {
@@ -367,6 +443,16 @@ type ExpenseHistoryRow = {
   }> | null;
 };
 
+type CommissionHistoryRow = {
+  id: string;
+  fecha_desde: string;
+  canales: Record<string, NumericValue> | null;
+  metodos: Array<{
+    comision?: NumericValue;
+    nombre?: string;
+  }> | null;
+};
+
 type FlavorBatchRow = {
   id: string;
   gusto_id: string;
@@ -427,6 +513,7 @@ type ErpDataResponse = {
   items_venta: SaleItemRow[];
   gastos: ExpenseRow[];
   gastos_historial: ExpenseHistoryRow[];
+  comisiones_historial?: CommissionHistoryRow[];
   tandas_gustos: FlavorBatchRow[];
   empleados: StaffRow[];
   asistencias: AttendanceRow[];
@@ -442,6 +529,7 @@ const SHIFT_CHANGE_HOUR = 16;
 const ARGENTINA_TIMEZONE = "America/Argentina/Buenos_Aires";
 const ARGENTINA_OFFSET = "-03:00";
 const THEME_STORAGE_KEY = "gestion-local.diseno";
+const OFFLINE_DATA_STORAGE_KEY = "gestion-local.ultimo-dato";
 const DEFAULT_FONT_FAMILY =
   "var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const BRAND_FONT_FAMILY = "'Great Vibes', 'Dancing Script', cursive";
@@ -472,30 +560,32 @@ const DEFAULT_BRAND_NAME = "Nombre del local";
 const DEFAULT_BRAND_SUBTITLE = "Gestión del local";
 
 const navItems: NavItem[] = [
-  { id: "inicio", label: "Hoy", icon: LayoutDashboard },
   { id: "caja", label: "Caja", icon: ShoppingCart },
-  { id: "ventas", label: "Historial ventas", icon: ReceiptText },
-  { id: "analisis", label: "Análisis", icon: BarChart3 },
-  { id: "historial", label: "Historial", icon: CalendarClock },
+  { id: "cierre-caja", label: "Cierre de caja", icon: DollarSign },
+  { id: "stock", label: "Stock", icon: Package },
+  { id: "ventas", label: "Ventas", icon: ReceiptText },
+  { id: "historial", label: "Ventas por período", icon: CalendarClock },
+  { id: "analisis", label: "Análisis ventas", icon: BarChart3 },
+  { id: "inicio", label: "Hoy", icon: LayoutDashboard },
   { id: "finanzas", label: "Ganancia", icon: WalletCards },
   { id: "empleados", label: "Empleados", icon: Users },
   { id: "historial-empleados", label: "Historial empleados", icon: CalendarClock },
-  { id: "stock", label: "Stock", icon: Package },
-  { id: "auditoria", label: "Auditoria", icon: ReceiptText },
+  { id: "auditoria", label: "Auditoría", icon: ReceiptText },
   { id: "diseno", label: "Diseño", icon: Palette },
 ];
 
 const navGroups: Array<{ label: string; items: ViewId[] }> = [
-  { label: "Operación", items: ["inicio", "caja", "ventas", "stock"] },
-  { label: "Reportes", items: ["analisis", "historial", "finanzas"] },
+  { label: "Operación", items: ["caja", "cierre-caja", "stock"] },
+  { label: "Ventas", items: ["ventas", "historial", "analisis"] },
+  { label: "Resumen", items: ["inicio", "finanzas"] },
   { label: "Equipo", items: ["empleados", "historial-empleados"] },
   { label: "Sistema", items: ["auditoria", "diseno"] },
 ];
 
 const allowedViewsByRole: Record<UserRole, ViewId[]> = {
-  admin: ["inicio", "caja", "ventas", "analisis", "historial", "finanzas", "empleados", "historial-empleados", "stock", "auditoria", "diseno"],
-  dueno: ["inicio", "caja", "ventas", "analisis", "historial", "finanzas", "empleados", "historial-empleados", "stock", "auditoria"],
-  empleado: ["inicio", "caja", "ventas", "stock", "empleados"],
+  admin: ["inicio", "caja", "cierre-caja", "stock", "ventas", "historial", "analisis", "finanzas", "empleados", "historial-empleados", "auditoria", "diseno"],
+  dueno: ["inicio", "caja", "stock", "ventas", "historial", "analisis", "finanzas", "empleados", "historial-empleados", "auditoria"],
+  empleado: ["caja", "cierre-caja", "stock", "ventas", "empleados"],
 };
 
 const saleChannelOptions: Array<{ id: SaleChannel; label: string }> = [
@@ -508,7 +598,7 @@ const channelFilterOptions: Array<{ id: ChannelFilter; label: string }> = [
   ...saleChannelOptions,
 ];
 const analysisPeriodOptions: Array<{ id: AnalysisPeriod; label: string }> = [
-  { id: "dia", label: "Dia" },
+  { id: "dia", label: "Día" },
   { id: "semana", label: "Semana" },
   { id: "mes", label: "Mes" },
   { id: "ano", label: "Año" },
@@ -1371,30 +1461,36 @@ const isThemeColorPresetActive = (
 
 const helpContentByView: Record<
   ViewId,
-  { title: string; summary: string; sections: HelpSection[] }
+  ViewHelpContent
 > = {
   inicio: {
     title: "Ayuda de hoy",
-    summary: "Para ver lo importante del dia y cerrar caja por turno.",
+    summary: "Para que dueño y admin vean lo importante del día.",
     sections: [
       {
         title: "Tablero",
         description:
-          "Resume ventas, empleados trabajando, reposicion y ganancia real.",
+          "Resume ventas, empleados trabajando, reposición y ganancia real.",
         details: [
           "Vendido hoy usa las ventas cargadas desde Caja.",
           "Ganancia real descuenta costo vendido, gastos fijos y comisiones.",
-          "Reposicion junta productos y gustos que estan bajo minimo.",
+          "Reposición junta productos y gustos que están bajo mínimo.",
         ],
       },
+    ],
+  },
+  "cierre-caja": {
+    title: "Ayuda de cierre de caja",
+    summary: "Para que el empleado cargue el cierre del turno.",
+    sections: [
       {
         title: "Cierre",
         description:
-          "Carga el efectivo contado y guarda la diferencia contra el sistema.",
+          "Carga el efectivo contado al terminar el turno.",
         details: [
           "El turno se detecta por horario.",
-          "El sistema compara efectivo contado contra ventas en efectivo.",
-          "Cada cierre queda guardado y tambien entra en auditoria.",
+          "El empleado carga el efectivo contado y una nota si hace falta.",
+          "El sistema guarda el último cierre cargado y lo sincroniza cuando hay internet.",
         ],
       },
     ],
@@ -1409,7 +1505,7 @@ const helpContentByView: Record<
           "Primero elegí una categoría y después un producto. Así el empleado encuentra todo más rápido.",
         details: [
           "Cuando entrás a Caja, primero ves las categorías grandes para no mezclar todo el catálogo.",
-          "Si tocás una categoría, entrás a esa vista y aparecen solo los productos de ese rubro.",
+          "Si tocás una categoría, entrás a esa vista y aparecen solo los productos de esa categoría.",
           "Con Volver regresás al inicio, y el buscador filtra dentro de la categoría abierta.",
         ],
       },
@@ -1724,7 +1820,7 @@ const helpContentByView: Record<
     ],
   },
   auditoria: {
-    title: "Ayuda de auditoria",
+    title: "Ayuda de auditoría",
     summary: "Para revisar cambios importantes hechos en el sistema.",
     sections: [
       {
@@ -1732,9 +1828,560 @@ const helpContentByView: Record<
         description:
           "Muestra ediciones de productos, stock, gastos, comisiones, empleados y cierres.",
         details: [
-          "Cada registro guarda accion, usuario y fecha.",
-          "Sirve para saber quien cambio algo y cuando.",
-          "Es una trazabilidad rapida de la operacion.",
+          "Cada registro guarda acción, usuario y fecha.",
+          "Sirve para saber quién cambió algo y cuándo.",
+          "Es una trazabilidad rápida de la operación.",
+        ],
+      },
+    ],
+  },
+};
+
+const detailedHelpContentByView: Record<ViewId, ViewHelpContent> = {
+  ...helpContentByView,
+  caja: {
+    title: "Caja",
+    summary: "Pantalla principal para tomar pedidos, elegir productos, aplicar descuentos y cobrar.",
+    sections: [
+      {
+        title: "Categorías",
+        description:
+          "Organizan el catálogo para que el empleado encuentre rápido lo que vende.",
+        details: [
+          "Al entrar se muestran las categorías disponibles, por ejemplo helado, café, bebidas o promos.",
+          "Al tocar una categoría aparecen solo los productos de esa categoría.",
+          "El botón Volver regresa a la lista de categorías.",
+          "El buscador permite encontrar productos por nombre dentro del catálogo.",
+          "Las categorías y productos se crean o modifican desde Stock.",
+        ],
+      },
+      {
+        title: "Productos y gustos",
+        description:
+          "Cada producto puede venderse directo o pedir selección de gustos.",
+        details: [
+          "Si el producto no usa gustos, se agrega al pedido apenas se toca.",
+          "Si el producto usa gustos, se abre el selector para elegir sabores.",
+          "El máximo de gustos depende de lo configurado en Stock para ese producto.",
+          "Se puede repetir un gusto si el cliente lo pide.",
+          "Al confirmar, el sistema agrega el producto al pedido y guarda los gustos elegidos.",
+        ],
+      },
+      {
+        title: "Pedido",
+        description:
+          "Es el resumen de todo lo que se va a cobrar antes de finalizar la venta.",
+        details: [
+          "Podés sumar o restar cantidad, borrar líneas y cancelar el pedido completo.",
+          "El subtotal suma todos los productos antes de descuentos.",
+          "El descuento se aplica antes del total final.",
+          "Antes de cobrar, elegí método de pago y canal de venta.",
+          "El total a cobrar es lo que finalmente paga el cliente.",
+        ],
+      },
+      {
+        title: "Cobro y stock",
+        description:
+          "Al cobrar, la venta queda guardada y afecta otras partes del sistema.",
+        details: [
+          "Cobrar pedido guarda la venta con fecha, hora, cliente, canal y método de pago.",
+          "El stock del producto baja según la cantidad vendida.",
+          "Si el producto usa gustos, también baja el stock de esos gustos.",
+          "La venta aparece en Ventas, Ventas por período, Análisis ventas, Hoy y Ganancia.",
+          "Si no hay internet, la venta queda pendiente y se sincroniza cuando vuelva la conexión.",
+        ],
+      },
+      {
+        title: "Empleado de caja",
+        description:
+          "La caja puede asociarse al empleado que está atendiendo.",
+        details: [
+          "Al entrar en Caja se puede elegir quién está usando la computadora.",
+          "Si el empleado no tenía entrada abierta, el sistema puede marcarla automáticamente.",
+          "Salir de caja permite cerrar la sesión de caja y, si corresponde, marcar salida del empleado.",
+          "Esto ayuda a relacionar ventas, turnos y asistencia.",
+        ],
+      },
+    ],
+  },
+  "cierre-caja": {
+    title: "Cierre de caja",
+    summary: "Pantalla para cerrar el turno comparando el efectivo real con lo vendido en el sistema.",
+    sections: [
+      {
+        title: "Para qué sirve",
+        description:
+          "Registra cuánto efectivo quedó en la caja al final del turno.",
+        details: [
+          "El sistema detecta el turno según el horario: mañana antes de las 16:00 y tarde desde las 16:00.",
+          "Muestra ventas del turno y efectivo que el sistema espera encontrar.",
+          "El empleado cuenta la plata física, carga el importe y puede dejar una observación.",
+          "La diferencia indica si sobró o faltó efectivo contra lo vendido.",
+        ],
+      },
+      {
+        title: "Cómo usarlo",
+        description:
+          "Se usa al terminar el turno o cuando cambia el responsable de caja.",
+        details: [
+          "Primero revisá que todas las ventas del turno estén cargadas en Caja.",
+          "Contá solo el efectivo que corresponde al turno.",
+          "Escribí el efectivo contado en el campo correspondiente.",
+          "Si hubo una situación especial, agregá una nota clara: vuelto prestado, retiro, error o diferencia explicada.",
+          "Guardá el cierre para dejar constancia del total del sistema, efectivo esperado, efectivo contado y diferencia.",
+        ],
+      },
+      {
+        title: "Sin internet",
+        description:
+          "El cierre puede quedar pendiente si la conexión falla.",
+        details: [
+          "Cuando no hay internet, el sistema guarda el cierre localmente.",
+          "El indicador Online o Sin internet muestra si hay operaciones pendientes.",
+          "Cuando vuelve la conexión, el sistema intenta enviar los cierres pendientes.",
+        ],
+      },
+      {
+        title: "Si no coincide",
+        description:
+          "Una diferencia no siempre significa pérdida; puede venir de una venta mal cargada.",
+        details: [
+          "Revisá Ventas para confirmar los cobros del turno.",
+          "Confirmá que las ventas en efectivo estén cargadas con método Efectivo.",
+          "Si se cobró por transferencia, tarjeta o Pedidos Ya, no debería sumarse al efectivo físico.",
+          "Usá la observación para explicar cualquier diferencia antes de cerrar.",
+        ],
+      },
+    ],
+  },
+  stock: {
+    title: "Stock",
+    summary: "Administración de productos, gustos, precios, costos, imágenes y alertas de reposición.",
+    sections: [
+      {
+        title: "Productos",
+        description:
+          "Son los artículos que se venden desde Caja.",
+        details: [
+          "Podés agregar productos nuevos y modificar productos existentes.",
+          "Cada producto puede tener nombre, categoría, precio, costo, stock, mínimo, unidad e imagen.",
+          "El precio define cuánto se cobra en Caja.",
+          "El costo se usa para calcular ganancia real.",
+          "El stock baja cuando se cobra una venta.",
+          "El mínimo dispara alertas para saber qué hay que reponer.",
+        ],
+      },
+      {
+        title: "Productos con gustos",
+        description:
+          "Permite configurar productos de helado o similares.",
+        details: [
+          "Si el producto usa gustos, Caja abre el selector de sabores.",
+          "Gustos a elegir define cuántos sabores puede seleccionar el cliente.",
+          "Porciones que descuenta define cuánto stock de gusto baja por venta.",
+          "Esto permite vender tamaños distintos sin crear una pantalla separada.",
+        ],
+      },
+      {
+        title: "Gustos",
+        description:
+          "Son sabores o variantes que tienen stock propio.",
+        details: [
+          "Podés agregar o modificar nombre, categoría, stock, mínimo y color.",
+          "El color ayuda a reconocer sabores visualmente.",
+          "El stock de gustos baja cuando se venden productos configurados con gustos.",
+          "Si el gusto llega al mínimo, aparece como bajo stock.",
+        ],
+      },
+      {
+        title: "Tandas o baldes",
+        description:
+          "Sirven para cargar producción y controlar rendimiento.",
+        details: [
+          "Cargar una tanda aumenta o registra stock de un gusto.",
+          "Cerrar una tanda permite dejar constancia de rendimiento o consumo.",
+          "Esto ayuda a ajustar mejor cuánto rinde cada balde o preparación.",
+        ],
+      },
+      {
+        title: "Alertas y permisos",
+        description:
+          "Stock es una pantalla sensible porque afecta ventas y ganancias.",
+        details: [
+          "Las alertas muestran productos y gustos por debajo del mínimo.",
+          "Conviene revisar bajo stock antes de horarios fuertes.",
+          "Dueño y admin pueden modificar stock; otros roles pueden verlo según permisos.",
+          "Si precio, costo o stock están mal, Caja y Ganancia también van a mostrar datos incorrectos.",
+        ],
+      },
+    ],
+  },
+  ventas: {
+    title: "Ventas",
+    summary: "Listado de ventas cobradas, ordenadas de la más reciente a la más antigua.",
+    sections: [
+      {
+        title: "Lista",
+        description:
+          "Permite revisar qué se vendió sin entrar a reportes grandes.",
+        details: [
+          "Cada venta muestra fecha, hora, cliente, canal, método de pago, cantidad de productos y total.",
+          "Las ventas se ordenan de la más nueva a la más vieja.",
+          "La pantalla pagina las ventas para que no se vuelva pesada.",
+          "Sirve para confirmar si un pedido se cobró correctamente.",
+        ],
+      },
+      {
+        title: "Filtros y detalle",
+        description:
+          "Ayuda a encontrar una venta puntual y revisar su composición.",
+        details: [
+          "Podés filtrar por turno y por canal cuando esos controles estén visibles.",
+          "Al tocar una venta, se despliega el detalle completo.",
+          "El detalle muestra subtotal, descuento, total final y productos vendidos.",
+          "Si hubo gustos elegidos, también aparecen junto al producto.",
+          "Esta pantalla es de consulta: para cargar una venta nueva se usa Caja.",
+        ],
+      },
+      {
+        title: "Cuándo usarla",
+        description:
+          "Es útil para resolver dudas del momento.",
+        details: [
+          "Usala si un cliente pregunta si ya se cobró algo.",
+          "Usala si el cierre de caja no coincide y necesitás revisar ventas del turno.",
+          "Usala para confirmar método de pago o canal de una venta reciente.",
+        ],
+      },
+    ],
+  },
+  historial: {
+    title: "Ventas por período",
+    summary: "Tabla comparativa para ver ventas y ganancia por día, semana, mes, año o total.",
+    sections: [
+      {
+        title: "Períodos",
+        description:
+          "Cambia la forma en que se agrupan las ventas.",
+        details: [
+          "Diario muestra los últimos días.",
+          "Semanal agrupa las ventas por semanas.",
+          "Mensual agrupa por mes.",
+          "Anual agrupa por año.",
+          "Total resume todo lo cargado en el sistema.",
+          "Cada botón cambia solo la información visible; no modifica ventas.",
+        ],
+      },
+      {
+        title: "Columnas",
+        description:
+          "La tabla muestra importes y volumen para comparar mejor.",
+        details: [
+          "Bruto muestra ventas cobradas antes de restar costos.",
+          "Neto estima lo que queda después de costo vendido, gastos y comisiones.",
+          "Productos indica cuántas unidades se vendieron.",
+          "Comparar bruto y neto ayuda a ver si se vendió mucho pero con poco margen.",
+        ],
+      },
+      {
+        title: "Filtros",
+        description:
+          "Permiten comparar turnos y canales.",
+        details: [
+          "Turno mañana y turno tarde ayudan a ver qué horario rinde más.",
+          "Canal local y Pedidos Ya ayudan a separar ventas presenciales de delivery.",
+          "Los filtros sirven para analizar sin borrar ni modificar datos.",
+        ],
+      },
+    ],
+  },
+  analisis: {
+    title: "Análisis ventas",
+    summary: "Reporte para entender qué se vende, cuánto deja y cómo se comportan los períodos.",
+    sections: [
+      {
+        title: "Resumen",
+        description:
+          "Muestra ventas, productos, costos, gastos, comisiones y ganancia para el período elegido.",
+        details: [
+          "Ventas brutas es todo lo cobrado antes de restar costos.",
+          "Productos vendidos cuenta unidades vendidas.",
+          "Costo vendido usa el costo configurado en Stock de cada producto vendido.",
+          "Comisiones descuenta porcentajes por método de pago y canal.",
+          "Ganancia real resta costo vendido, gastos y comisiones.",
+        ],
+      },
+      {
+        title: "Filtros",
+        description:
+          "Permiten mirar el negocio desde distintos ángulos.",
+        details: [
+          "El período puede ser día, semana, mes, año o total.",
+          "El turno puede ser todo, mañana o tarde.",
+          "Mañana toma ventas antes de las 16:00 y tarde desde las 16:00.",
+          "El canal separa Local y Pedidos Ya si corresponde.",
+          "Cuando filtrás una parte del período, los gastos se asignan proporcionalmente.",
+        ],
+      },
+      {
+        title: "Rankings y ventas",
+        description:
+          "Ayudan a detectar productos fuertes y gustos más pedidos.",
+        details: [
+          "El ranking de productos muestra qué artículos salen más.",
+          "El ranking de gustos muestra los sabores más elegidos en productos con gustos.",
+          "La lista de ventas del análisis permite revisar operaciones dentro del período filtrado.",
+          "Sirve para decidir producción, compras, promociones y cambios de menú.",
+        ],
+      },
+      {
+        title: "Histórico y gastos",
+        description:
+          "Compara resultados y explica el impacto de gastos.",
+        details: [
+          "El histórico permite comparar períodos anteriores.",
+          "La lectura de gastos ayuda a entender por qué la ganancia baja aunque las ventas suban.",
+          "Para modificar gastos o comisiones, entrá a Ganancia.",
+        ],
+      },
+    ],
+  },
+  inicio: {
+    title: "Hoy",
+    summary: "Tablero rápido para ver cómo viene el día sin entrar a cada pantalla.",
+    sections: [
+      {
+        title: "Qué muestra",
+        description:
+          "Resume el estado del local con ventas, costos, comisiones, gastos, ganancia y avisos importantes.",
+        details: [
+          "Vendido hoy sale de las ventas cobradas en Caja durante el día operativo.",
+          "Costo vendido toma el costo de los productos que realmente se vendieron.",
+          "Comisiones descuenta porcentajes de métodos de pago y canales como Pedidos Ya.",
+          "Gastos fijos del día reparte los gastos configurados para estimar el resultado diario.",
+          "Ganancia real muestra ventas menos costo vendido, comisiones y gastos.",
+        ],
+      },
+      {
+        title: "Cuándo usarlo",
+        description:
+          "Sirve para que el encargado o dueño revise el negocio de un vistazo.",
+        details: [
+          "Usalo al abrir, a mitad del día o al cierre para detectar si el día viene bien.",
+          "Si aparecen productos o gustos bajos, conviene ir a Stock para reponer o corregir mínimos.",
+          "Si la ganancia no parece correcta, revisá costos de productos, gastos y comisiones.",
+        ],
+      },
+      {
+        title: "Qué no se edita acá",
+        description:
+          "Hoy es una pantalla informativa; los cambios se hacen en otras secciones.",
+        details: [
+          "Las ventas se cargan desde Caja.",
+          "Los costos, precios, stock y mínimos se modifican desde Stock.",
+          "Los gastos y comisiones se modifican desde Ganancia.",
+          "Los empleados y fichajes se administran desde Empleados o Historial empleados.",
+        ],
+      },
+    ],
+  },
+  finanzas: {
+    title: "Ganancia",
+    summary: "Pantalla para revisar cuánto entra, cuánto cuesta vender y cuánto queda realmente.",
+    sections: [
+      {
+        title: "Lectura principal",
+        description:
+          "Resume la salud económica del local.",
+        details: [
+          "Total vendido muestra todo lo cobrado por ventas.",
+          "Costo vendido descuenta el costo de productos que efectivamente se vendieron.",
+          "Gastos fijos descuenta importes como sueldos, alquiler, luz, agua, gas u otros.",
+          "Comisiones descuenta porcentajes de cobro o canales.",
+          "Ganancia real es el resultado después de todas esas restas.",
+        ],
+      },
+      {
+        title: "Gastos",
+        description:
+          "Desde acá se agregan o modifican gastos que afectan la ganancia.",
+        details: [
+          "Podés editar importes de gastos fijos existentes.",
+          "Cuando guardás cambios, el sistema conserva historial para no romper períodos anteriores.",
+          "Si se corrige un gasto histórico, el sistema puede recalcular según el historial guardado.",
+          "Conviene mantener gastos actualizados para que Hoy, Análisis ventas y Ventas por período sean confiables.",
+        ],
+      },
+      {
+        title: "Comisiones",
+        description:
+          "Configura descuentos por método de pago y canal de venta.",
+        details: [
+          "Cada método de pago puede tener porcentaje de comisión.",
+          "Los canales como Local o Pedidos Ya también pueden tener comisión propia.",
+          "Las comisiones se restan de la ganancia, no del total vendido.",
+          "El historial permite que ventas viejas mantengan la comisión que correspondía en ese momento.",
+        ],
+      },
+      {
+        title: "Qué revisar si el número no cierra",
+        description:
+          "La ganancia depende de varias pantallas del sistema.",
+        details: [
+          "Revisá Stock si los costos de productos están incompletos o desactualizados.",
+          "Revisá Caja y Ventas si faltan ventas o algún método de pago está mal elegido.",
+          "Revisá gastos y comisiones si cambiaron tarifas, alquileres o porcentajes.",
+        ],
+      },
+    ],
+  },
+  empleados: {
+    title: "Empleados",
+    summary: "Vista operativa para ver quién está trabajando y registrar entradas o salidas.",
+    sections: [
+      {
+        title: "Estado del equipo",
+        description:
+          "Muestra empleados activos, jornadas abiertas y avisos importantes.",
+        details: [
+          "Las tarjetas indican quién está en jornada.",
+          "Si alguien está usando la caja, queda marcado como empleado de caja.",
+          "Los filtros permiten ver todo el equipo, solo jornadas activas o avisos.",
+          "Sirve para el uso diario sin cargar de información administrativa la pantalla.",
+        ],
+      },
+      {
+        title: "Entrada y salida",
+        description:
+          "Registra el horario real de trabajo.",
+        details: [
+          "Entrada marca el comienzo de la jornada del empleado.",
+          "Salida marca el fin de la jornada.",
+          "Cada fichaje guarda empleado, tipo de evento, turno y fecha completa.",
+          "Si alguien se olvida de fichar, se puede corregir desde Historial empleados.",
+        ],
+      },
+      {
+        title: "Avisos de jornada",
+        description:
+          "Ayudan a controlar horarios sin revisar empleado por empleado.",
+        details: [
+          "El sistema avisa cuando una jornada está cerca de cumplir 8 horas.",
+          "También avisa si una jornada se pasó y todavía no tiene salida.",
+          "Estos avisos ayudan a evitar olvidos al cerrar turnos.",
+        ],
+      },
+    ],
+  },
+  "historial-empleados": {
+    title: "Historial empleados",
+    summary: "Administración del personal y corrección de fichajes.",
+    sections: [
+      {
+        title: "Agregar o modificar empleados",
+        description:
+          "Acá se mantiene la información del personal.",
+        details: [
+          "Agregar empleado permite cargar nombre, rol, turno, sector, estado y datos necesarios.",
+          "Editar empleado sirve para cambiar nombre, turno, sector, estado o datos cargados.",
+          "El estado permite ordenar si alguien está activo, ausente, en pausa o de franco.",
+          "Los cambios afectan cómo aparece el empleado en Caja y Empleados.",
+        ],
+      },
+      {
+        title: "Fichajes",
+        description:
+          "Permite revisar y corregir entradas o salidas.",
+        details: [
+          "Podés agregar un fichaje manual si alguien olvidó marcar entrada o salida.",
+          "Podés editar un registro existente si se cargó mal la hora o el tipo.",
+          "Las correcciones ayudan a que Empleados muestre bien las jornadas abiertas.",
+          "También dejan ordenado el historial para controles internos.",
+        ],
+      },
+      {
+        title: "Cuándo usarlo",
+        description:
+          "Es una vista más administrativa que operativa.",
+        details: [
+          "Usala para altas, cambios de datos y correcciones.",
+          "Para marcar el día a día, conviene usar Empleados.",
+          "Para cambiar quién está en caja, usá la sesión de Caja o Salir de caja.",
+        ],
+      },
+    ],
+  },
+  auditoria: {
+    title: "Auditoría",
+    summary: "Registro de cambios importantes para saber qué se modificó, cuándo y por quién.",
+    sections: [
+      {
+        title: "Qué registra",
+        description:
+          "Guarda trazabilidad de acciones sensibles del sistema.",
+        details: [
+          "Puede registrar cambios en productos, stock, gastos, comisiones, empleados y cierres.",
+          "Cada registro muestra acción, usuario, fecha y detalle del cambio.",
+          "Sirve para revisar modificaciones sin entrar a la base de datos.",
+        ],
+      },
+      {
+        title: "Cómo leerlo",
+        description:
+          "La lista muestra eventos recientes con información resumida.",
+        details: [
+          "Buscá por fecha aproximada o por tipo de cambio.",
+          "El detalle muestra los campos más importantes modificados.",
+          "Si algo en Ganancia o Stock no coincide, Auditoría ayuda a detectar el último cambio.",
+        ],
+      },
+      {
+        title: "Qué no se modifica acá",
+        description:
+          "Auditoría es solo de consulta.",
+        details: [
+          "No se editan ventas, productos ni empleados desde esta pantalla.",
+          "Para corregir datos hay que ir a la sección correspondiente.",
+          "La idea es mantener un historial confiable de lo que pasó.",
+        ],
+      },
+    ],
+  },
+  diseno: {
+    title: "Diseño",
+    summary: "Personalización visual del sistema: nombre, logo, icono, colores y tipografías.",
+    sections: [
+      {
+        title: "Identidad",
+        description:
+          "Permite adaptar el sistema al local.",
+        details: [
+          "Podés cambiar el nombre que aparece en el encabezado y el menú.",
+          "Podés usar un logo cargado como imagen o un icono del sistema.",
+          "Podés cambiar el icono de pestaña o de la aplicación.",
+          "La tipografía del nombre define cómo se ve la marca dentro del sistema.",
+        ],
+      },
+      {
+        title: "Colores y presets",
+        description:
+          "Cambia el aspecto general sin tocar código.",
+        details: [
+          "Los presets aplican combinaciones de colores listas.",
+          "También podés editar colores individuales del fondo, paneles, menú, texto y botones.",
+          "Los cambios se previsualizan en pantalla para probar antes de guardar.",
+          "Guardar diseño deja los cambios persistidos.",
+          "Restablecer vuelve a la configuración base.",
+        ],
+      },
+      {
+        title: "Imágenes",
+        description:
+          "El sistema optimiza imágenes cargadas para marca y productos.",
+        details: [
+          "Elegir imagen permite subir logo o icono.",
+          "La imagen queda guardada y se usa en el sistema.",
+          "Si la imagen no se ve bien, conviene subir una versión cuadrada y nítida.",
         ],
       },
     ],
@@ -1873,6 +2520,17 @@ const getCurrentTime = () => {
   return `${hour}:${minute}:${second}`;
 };
 
+const createLocalUuid = () => {
+  if (typeof window !== "undefined" && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  const randomHex = (length: number) =>
+    Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+
+  return `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-8${randomHex(3)}-${randomHex(12)}`;
+};
+
 const toNumber = (value: NumericValue) => Number(value ?? 0);
 
 const isColorValue = (value: unknown): value is string =>
@@ -1915,6 +2573,32 @@ const createBrandFavicon = (theme: ThemeSettings) => {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 };
 
+const getFaviconType = (href: string) => {
+  const normalized = href.toLowerCase().split(/[?#]/)[0];
+
+  if (normalized.startsWith("data:image/svg+xml") || normalized.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+  if (normalized.startsWith("data:image/png") || normalized.endsWith(".png")) {
+    return "image/png";
+  }
+  if (
+    normalized.startsWith("data:image/jpeg") ||
+    normalized.endsWith(".jpg") ||
+    normalized.endsWith(".jpeg")
+  ) {
+    return "image/jpeg";
+  }
+  if (normalized.startsWith("data:image/webp") || normalized.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (normalized.endsWith(".ico")) {
+    return "image/x-icon";
+  }
+
+  return "";
+};
+
 const applyBrowserBrandSettings = (theme: ThemeSettings) => {
   if (typeof document === "undefined") return;
 
@@ -1925,15 +2609,42 @@ const applyBrowserBrandSettings = (theme: ThemeSettings) => {
     theme.faviconUrl.trim() ||
     (theme.brandLogoMode === "image" ? theme.brandImageUrl.trim() : "") ||
     createBrandFavicon(theme);
-  let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  const faviconType = getFaviconType(faviconHref);
+  const oldFavicons = document.querySelectorAll<HTMLLinkElement>(
+    'link[rel~="icon"], link[rel="apple-touch-icon"]',
+  );
 
-  if (!favicon) {
-    favicon = document.createElement("link");
-    favicon.rel = "icon";
+  oldFavicons.forEach((favicon) => favicon.remove());
+
+  [
+    { rel: "icon", sizes: "192x192" },
+    { rel: "shortcut icon", sizes: "" },
+    { rel: "apple-touch-icon", sizes: "180x180" },
+  ].forEach(({ rel, sizes }) => {
+    const favicon = document.createElement("link");
+    favicon.rel = rel;
+    favicon.href = faviconHref;
+    if (faviconType) {
+      favicon.type = faviconType;
+    }
+    if (sizes) {
+      favicon.setAttribute("sizes", sizes);
+    }
     document.head.appendChild(favicon);
+  });
+
+  const manifestVersion = encodeURIComponent(
+    `${brandName}-${faviconHref}-${theme.primary}`,
+  );
+  let manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+
+  if (!manifest) {
+    manifest = document.createElement("link");
+    manifest.rel = "manifest";
+    document.head.appendChild(manifest);
   }
 
-  favicon.href = faviconHref;
+  manifest.href = `/api/erp/manifest.webmanifest?v=${manifestVersion}`;
 };
 
 const normalizeThemeSettings = (
@@ -2068,6 +2779,37 @@ const createAutomaticId = (
 const getFlavorCategoryName = (category?: string | null) =>
   category?.trim() || "Sin categoría";
 
+const formatCategoryLabel = (category: string) => {
+  const label = category.trim();
+  const normalized = label.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const replacements: Record<string, string> = {
+    cafe: "Café",
+    limon: "Limón",
+    maracuya: "Maracuyá",
+    sandia: "Sandía",
+  };
+
+  return replacements[normalized] ?? label;
+};
+
+const getProductCategoryIcon = (category: string): LucideIcon => {
+  const normalized = formatCategoryLabel(category)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+
+  if (normalized === "helado") return Snowflake;
+  if (normalized === "cafe") return Coffee;
+  if (normalized === "salado") return Store;
+  if (normalized === "dulce") return ReceiptText;
+  if (normalized === "bebida") return CreditCard;
+  if (normalized === "aperitivo") return WalletCards;
+  if (normalized === "desayuno") return SunMedium;
+  if (normalized === "promo") return BadgeDollarSign;
+
+  return Package;
+};
+
 const groupFlavorsByCategory = (flavors: IceCreamFlavor[]) => {
   const groups = flavors.reduce<Map<string, IceCreamFlavor[]>>((map, flavor) => {
     const category = getFlavorCategoryName(flavor.category);
@@ -2087,7 +2829,12 @@ const groupFlavorsByCategory = (flavors: IceCreamFlavor[]) => {
 
 const getSaleHour = (sale: Sale) => {
   const [hour] = sale.time.split(":");
-  return Number(hour || 0);
+  const parsedHour = Number(hour);
+  if (Number.isFinite(parsedHour)) {
+    return parsedHour;
+  }
+
+  return getArgentinaDateParts(sale.createdAt).hour;
 };
 
 const getCurrentShift = (): ShiftName => {
@@ -2136,10 +2883,25 @@ const calculateCommissionCost = (
   sales: Sale[],
   methodCommissions: Record<string, number>,
   channelCommissions: Record<SaleChannel, number>,
+  commissionHistory: CommissionHistory[] = [],
 ) =>
   sales.reduce((total, sale) => {
-    const methodRate = methodCommissions[sale.method] ?? 0;
-    const channelRate = channelCommissions[sale.channel] ?? 0;
+    const saleDate = new Date(sale.createdAt);
+    const activeSnapshot = [...commissionHistory]
+      .sort(
+        (left, right) =>
+          new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime(),
+      )
+      .filter((snapshot) => new Date(snapshot.startsAt) <= saleDate)
+      .at(-1);
+    const methodRates =
+      activeSnapshot?.methods.reduce<Record<string, number>>((acc, method) => {
+        acc[method.name] = method.rate;
+        return acc;
+      }, {}) ?? methodCommissions;
+    const channelRates = activeSnapshot?.channels ?? channelCommissions;
+    const methodRate = methodRates[sale.method] ?? 0;
+    const channelRate = channelRates[sale.channel] ?? 0;
     return total + sale.total * ((methodRate + channelRate) / 100);
   }, 0);
 
@@ -2296,7 +3058,7 @@ const mapSale = (sale: SaleRow): Sale => ({
   customer: sale.cliente ?? "Mostrador",
   channel: inferSaleChannel(sale),
   items: sale.productos ?? 0,
-  method: sale.metodo ?? "Sin metodo",
+  method: sale.metodo ?? "Sin método",
   time: sale.hora?.slice(0, 5) ?? "--:--",
   total: toNumber(sale.total),
   subtotal: toNumber(sale.subtotal) || toNumber(sale.total),
@@ -2332,6 +3094,19 @@ const mapExpenseHistory = (history: ExpenseHistoryRow): ExpenseHistory => ({
     label: expense.nombre ?? "Gasto",
     category: expense.categoria ?? "General",
     amount: toNumber(expense.monto ?? 0),
+  })),
+});
+
+const mapCommissionHistory = (history: CommissionHistoryRow): CommissionHistory => ({
+  id: history.id,
+  startsAt: history.fecha_desde,
+  channels: {
+    local: toNumber(history.canales?.local ?? 0),
+    pedidos_ya: toNumber(history.canales?.pedidos_ya ?? 0),
+  },
+  methods: (history.metodos ?? []).map((method) => ({
+    name: method.nombre ?? "Método",
+    rate: toNumber(method.comision ?? 0),
   })),
 });
 
@@ -2410,6 +3185,7 @@ export function GestionLocalErp() {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [expenseHistory, setExpenseHistory] = useState<ExpenseHistory[]>([]);
+  const [commissionHistory, setCommissionHistory] = useState<CommissionHistory[]>([]);
   const [flavorBatches, setFlavorBatches] = useState<FlavorBatch[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -2442,11 +3218,28 @@ export function GestionLocalErp() {
   const [isBooting, setIsBooting] = useState(true);
   const [, setIsSupabaseReady] = useState(false);
   const [, setIsLoadingData] = useState(true);
+  const [isOnline, setIsOnline] = useState(true);
+  const [pendingOfflineSales, setPendingOfflineSales] = useState(0);
+  const [isSyncingOfflineSales, setIsSyncingOfflineSales] = useState(false);
+  const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdaterState>({
+    status: "unsupported",
+  });
   const allowedViews = sessionUser
     ? allowedViewsByRole[sessionUser.role]
     : allowedViewsByRole.empleado;
   const visibleNavItems = navItems.filter((item) => allowedViews.includes(item.id));
-  const activeHelp = helpContentByView[activeView];
+  const helpGuideGroups = navGroups
+    .map((group) => ({
+      label: group.label,
+      items: group.items
+        .map((id) => visibleNavItems.find((item) => item.id === id))
+        .filter((item): item is NavItem => Boolean(item))
+        .map((item) => ({
+          help: detailedHelpContentByView[item.id],
+          item,
+        })),
+    }))
+    .filter((group) => group.items.length > 0);
   const themeStyle = buildThemeStyle(themeSettings);
 
   const applyThemeSettings = (settings: Partial<ThemeSettings> | null | undefined) => {
@@ -2463,21 +3256,7 @@ export function GestionLocalErp() {
     applyBrowserBrandSettings(normalized);
   };
 
-  const loadData = async (successNotice = "Datos conectados con Supabase") => {
-    setIsLoadingData(true);
-
-    const response = await fetch("/api/erp/datos", { cache: "no-store" }).catch(
-      () => null,
-    );
-
-    if (!response?.ok) {
-      setIsSupabaseReady(false);
-      setIsLoadingData(false);
-      setNotice("No se pudo cargar la base de datos");
-      return false;
-    }
-
-    const data = (await response.json()) as ErpDataResponse;
+  const applyErpData = (data: ErpDataResponse) => {
     const methods = (data.metodos_pago ?? []).map((item) => item.nombre);
     const methodCommissions = Object.fromEntries(
       (data.metodos_pago ?? []).map((item) => [
@@ -2498,6 +3277,7 @@ export function GestionLocalErp() {
     setSaleItems((data.items_venta ?? []).map(mapSaleItem));
     setExpenses((data.gastos ?? []).map(mapExpense));
     setExpenseHistory((data.gastos_historial ?? []).map(mapExpenseHistory));
+    setCommissionHistory((data.comisiones_historial ?? []).map(mapCommissionHistory));
     setFlavorBatches((data.tandas_gustos ?? []).map(mapFlavorBatch));
     setStaff((data.empleados ?? []).map(mapStaffMember));
     setAttendance((data.asistencias ?? []).map(mapAttendance));
@@ -2508,6 +3288,35 @@ export function GestionLocalErp() {
     setPaymentMethod((current) =>
       current && methods.includes(current) ? current : methods[0] ?? "",
     );
+  };
+
+  const loadData = async (successNotice = "Datos conectados con Supabase") => {
+    setIsLoadingData(true);
+
+    const response = await fetch("/api/erp/datos", { cache: "no-store" }).catch(
+      () => null,
+    );
+
+    if (!response?.ok) {
+      setIsSupabaseReady(false);
+      setIsLoadingData(false);
+      const cached = window.localStorage.getItem(OFFLINE_DATA_STORAGE_KEY);
+      if (cached) {
+        try {
+          applyErpData(JSON.parse(cached) as ErpDataResponse);
+          setNotice("Sin internet: usando los últimos datos guardados en esta PC");
+          return true;
+        } catch {
+          window.localStorage.removeItem(OFFLINE_DATA_STORAGE_KEY);
+        }
+      }
+      setNotice("No se pudo cargar la base de datos");
+      return false;
+    }
+
+    const data = (await response.json()) as ErpDataResponse;
+    applyErpData(data);
+    window.localStorage.setItem(OFFLINE_DATA_STORAGE_KEY, JSON.stringify(data));
     setIsSupabaseReady(true);
     setIsLoadingData(false);
     setNotice(successNotice);
@@ -2535,6 +3344,7 @@ export function GestionLocalErp() {
     });
     setThemeDraft(nextTheme);
     setThemeSettings(nextTheme);
+    applyBrowserBrandSettings(nextTheme);
   };
 
   const applyThemePreset = (
@@ -2548,6 +3358,7 @@ export function GestionLocalErp() {
     });
     setThemeDraft(nextTheme);
     setThemeSettings(nextTheme);
+    applyBrowserBrandSettings(nextTheme);
   };
 
   const saveTheme = async (settings = themeDraft) => {
@@ -2555,25 +3366,51 @@ export function GestionLocalErp() {
     setIsSavingTheme(true);
     applyThemeSettings(nextTheme);
 
-    const response = await fetch("/api/erp/diseno", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ diseno: nextTheme }),
-    }).catch(() => null);
+    try {
+      const result = await submitJsonMutation("diseño", {
+        url: "/api/erp/diseno",
+        method: "PATCH",
+        body: { diseno: nextTheme },
+      });
 
-    setIsSavingTheme(false);
-
-    if (!response?.ok) {
+      setIsSavingTheme(false);
+      if (!result.queued) {
+        setNotice("Diseño guardado");
+      }
+      return true;
+    } catch {
+      setIsSavingTheme(false);
       setNotice("No se pudo guardar el diseño en la base");
       return false;
     }
-
-    setNotice("Diseño guardado");
-    return true;
   };
 
   const resetTheme = () => {
     void saveTheme(defaultThemeSettings);
+  };
+
+  const checkDesktopUpdate = async () => {
+    if (!window.cajaUpdater) return;
+
+    const status = await window.cajaUpdater.check().catch(() => ({
+      message: "No se pudo buscar actualización",
+      status: "error" as const,
+    }));
+    setDesktopUpdate(status);
+  };
+
+  const downloadDesktopUpdate = async () => {
+    if (!window.cajaUpdater) return;
+
+    const status = await window.cajaUpdater.download().catch(() => ({
+      message: "No se pudo descargar la actualización",
+      status: "error" as const,
+    }));
+    setDesktopUpdate(status);
+  };
+
+  const installDesktopUpdate = () => {
+    void window.cajaUpdater?.install();
   };
 
   useEffect(() => {
@@ -2603,8 +3440,27 @@ export function GestionLocalErp() {
     return () => {
       isMounted = false;
     };
-    // La carga inicial corre una sola vez; loadData tambien se usa despues de guardar cambios.
+    // La carga inicial corre una sola vez; loadData también se usa después de guardar cambios.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!window.cajaUpdater) return;
+
+    let isMounted = true;
+    window.cajaUpdater.getStatus().then((status) => {
+      if (isMounted) {
+        setDesktopUpdate(status);
+      }
+    }).catch(() => undefined);
+    const unsubscribe = window.cajaUpdater.onStatus((status) => {
+      setDesktopUpdate(status);
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -2612,6 +3468,216 @@ export function GestionLocalErp() {
     const intervalId = window.setInterval(() => setTimeTick(Date.now()), 60000);
     return () => window.clearInterval(intervalId);
   }, []);
+
+  const refreshOfflineSaleCount = async () => {
+    const [salesCount, closesCount, mutationsCount] = await Promise.all([
+      countOfflineSales(),
+      countOfflineCashCloses(),
+      countOfflineJsonMutations(),
+    ]);
+    setPendingOfflineSales(salesCount + closesCount + mutationsCount);
+  };
+
+  const shouldQueueOfflineError = (error: unknown) =>
+    !window.navigator.onLine ||
+    error instanceof TypeError ||
+    Boolean((error as { retryable?: boolean }).retryable);
+
+  const submitJsonMutation = async (
+    label: string,
+    request: OfflineJsonMutationRecord["request"],
+  ) => {
+    try {
+      const response = await fetch(request.url, {
+        method: request.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request.body),
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        const error = new Error(data?.error ?? `No se pudo guardar ${label}`) as Error & {
+          retryable?: boolean;
+        };
+        error.retryable = response.status >= 500;
+        throw error;
+      }
+
+      return { queued: false, response };
+    } catch (error) {
+      if (!shouldQueueOfflineError(error)) {
+        throw error;
+      }
+
+      await enqueueOfflineJsonMutation({
+        id: createLocalUuid(),
+        createdAt: new Date().toISOString(),
+        label,
+        request,
+      });
+      await refreshOfflineSaleCount();
+      setNotice(`Sin internet: ${label} guardado en esta PC para sincronizar`);
+      return { queued: true, response: null };
+    }
+  };
+
+  const submitSalePayload = async (payload: OfflineSalePayload) => {
+    const response = await fetch("/api/erp/ventas", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      const error = new Error(
+        data?.error ?? "No se pudo guardar el pedido en la base",
+      ) as Error & { retryable?: boolean };
+      error.retryable = response.status >= 500;
+      throw error;
+    }
+  };
+
+  const submitCashClosePayload = async (payload: OfflineCashClosePayload) => {
+    const response = await fetch("/api/erp/cierres-caja", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      const error = new Error(
+        data?.error ?? "No se pudo guardar el cierre en la base",
+      ) as Error & { retryable?: boolean };
+      error.retryable = response.status >= 500;
+      throw error;
+    }
+  };
+
+  const applyOfflineSaleLocally = (record: OfflineSaleRecord) => {
+    setSales((current) =>
+      current.some((sale) => sale.id === record.sale.id)
+        ? current
+        : [record.sale, ...current],
+    );
+    setSaleItems((current) => {
+      const existingIds = new Set(current.map((item) => item.id));
+      return [
+        ...record.saleItems.filter((item) => !existingIds.has(item.id)),
+        ...current,
+      ];
+    });
+    setProducts((current) =>
+      current.map((product) => {
+        const adjustment = record.productAdjustments.find(
+          (item) => item.id === product.id,
+        );
+        return adjustment
+          ? { ...product, stock: Math.max(0, product.stock - adjustment.quantity) }
+          : product;
+      }),
+    );
+    setIceCreamFlavors((current) =>
+      current.map((flavor) => {
+        const adjustment = record.flavorAdjustments.find(
+          (item) => item.id === flavor.id,
+        );
+        return adjustment
+          ? { ...flavor, stock: flavor.stock - adjustment.quantity }
+          : flavor;
+      }),
+    );
+  };
+
+  const syncPendingOfflineSales = async () => {
+    if (isSyncingOfflineSales || !window.navigator.onLine) return;
+
+    setIsSyncingOfflineSales(true);
+    const pendingSales = await getOfflineSales();
+    const pendingCashCloses = await getOfflineCashCloses();
+    const pendingMutations = await getOfflineJsonMutations();
+    let synced = 0;
+
+    for (const pendingSale of pendingSales) {
+      try {
+        await submitSalePayload(pendingSale.payload);
+        await removeOfflineSale(pendingSale.id);
+        synced += 1;
+      } catch {
+        break;
+      }
+    }
+
+    for (const pendingClose of pendingCashCloses) {
+      try {
+        await submitCashClosePayload(pendingClose.payload);
+        await removeOfflineCashClose(pendingClose.id);
+        synced += 1;
+      } catch {
+        break;
+      }
+    }
+
+    for (const pendingMutation of pendingMutations) {
+      try {
+        const response = await fetch(pendingMutation.request.url, {
+          method: pendingMutation.request.method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(pendingMutation.request.body),
+        });
+        if (!response.ok) throw new Error("No se pudo sincronizar");
+        await removeOfflineJsonMutation(pendingMutation.id);
+        synced += 1;
+      } catch {
+        break;
+      }
+    }
+
+    await refreshOfflineSaleCount();
+    setIsSyncingOfflineSales(false);
+
+    if (synced > 0) {
+      await loadData(`${synced} dato${synced === 1 ? "" : "s"} offline sincronizado${synced === 1 ? "" : "s"}`);
+    }
+  };
+
+  useEffect(() => {
+    const updateOnlineStatus = () => {
+      setIsOnline(window.navigator.onLine);
+      if (window.navigator.onLine) {
+        void syncPendingOfflineSales();
+      }
+    };
+
+    setIsOnline(window.navigator.onLine);
+    void refreshOfflineSaleCount();
+    void getOfflineSales().then((records) => {
+      records.forEach(applyOfflineSaleLocally);
+    });
+    window.addEventListener("online", updateOnlineStatus);
+    window.addEventListener("offline", updateOnlineStatus);
+
+    return () => {
+      window.removeEventListener("online", updateOnlineStatus);
+      window.removeEventListener("offline", updateOnlineStatus);
+    };
+    // Las funciones usan el estado actual de la caja y no necesitan rearmar listeners.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (isOnline && pendingOfflineSales > 0) {
+      void syncPendingOfflineSales();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, pendingOfflineSales]);
 
   useEffect(() => {
     if (!allowedViews.includes(activeView)) {
@@ -2676,6 +3742,7 @@ export function GestionLocalErp() {
     sales,
     paymentMethodCommissions,
     channelCommissions,
+    commissionHistory,
   );
   const netProfit = grossRevenue - soldProductCost - fixedExpenses - commissionCost;
   const lowStock = products.filter(isProductLowStock);
@@ -2906,6 +3973,17 @@ export function GestionLocalErp() {
       total: item.price * item.quantity,
       gustos: item.flavors,
     }));
+    const localSaleItems: SaleItem[] = saleItems.map((item, index) => ({
+      id: `${newSale.id}-${index}`,
+      saleId: newSale.id,
+      product: item.producto,
+      quantity: item.cantidad,
+      price: item.precio,
+      cost: item.costo,
+      total: item.total,
+      flavors: item.gustos,
+      createdAt: newSale.createdAt,
+    }));
 
     const inventoryMovements = soldEntries.map(([productId, quantity]) => ({
       sucursal_id: DEFAULT_BRANCH_ID,
@@ -2915,56 +3993,52 @@ export function GestionLocalErp() {
       nota: `Pedido ${newSale.id}`,
       usuario_id: sessionUser?.id ?? null,
     }));
+    const salePayload: OfflineSalePayload = {
+      venta: {
+        id: newSale.id,
+        sucursal_id: DEFAULT_BRANCH_ID,
+        cliente: newSale.customer,
+        canal: newSale.channel,
+        productos: newSale.items,
+        metodo: newSale.method,
+        subtotal: newSale.subtotal,
+        descuento: newSale.discount,
+        total: newSale.total,
+        hora: saleTime,
+        estado: "pagada",
+        usuario_id: sessionUser?.id ?? null,
+      },
+      items: saleItems,
+      movimientos: inventoryMovements,
+      stock: soldEntries.map(([productId, quantity]) => {
+        const product = productsSnapshot.find((item) => item.id === productId);
+        return {
+          cantidad: quantity,
+          id: productId,
+          stock: Math.max(0, (product?.stock ?? 0) - quantity),
+        };
+      }),
+      stock_gustos: flavorStockUpdates.map((flavor) => ({
+        cantidad: flavor.quantity,
+        id: flavor.id,
+        stock: flavor.stock,
+      })),
+    };
+    const offlineRecord: OfflineSaleRecord = {
+      id: newSale.id,
+      createdAt: newSale.createdAt,
+      payload: salePayload,
+      sale: newSale,
+      saleItems: localSaleItems,
+      productAdjustments: soldEntries.map(([id, quantity]) => ({ id, quantity })),
+      flavorAdjustments: flavorStockUpdates.map((flavor) => ({
+        id: flavor.id,
+        quantity: flavor.quantity,
+      })),
+    };
 
     try {
-      const response = await fetch("/api/erp/ventas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          venta: {
-            id: newSale.id,
-            sucursal_id: DEFAULT_BRANCH_ID,
-            cliente: newSale.customer,
-            canal: newSale.channel,
-            productos: newSale.items,
-            metodo: newSale.method,
-            subtotal: newSale.subtotal,
-            descuento: newSale.discount,
-            total: newSale.total,
-            hora: saleTime,
-            estado: "pagada",
-            usuario_id: sessionUser?.id ?? null,
-          },
-          items: saleItems,
-          movimientos: inventoryMovements,
-          stock: soldEntries.map(([productId, quantity]) => {
-            const product = productsSnapshot.find((item) => item.id === productId);
-            return {
-              cantidad: quantity,
-              id: productId,
-              stock: Math.max(0, (product?.stock ?? 0) - quantity),
-            };
-          }),
-          stock_gustos: flavorStockUpdates.map((flavor) => ({
-            cantidad: flavor.quantity,
-            id: flavor.id,
-            stock: flavor.stock,
-          })),
-        }),
-      });
-
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        setIsSupabaseReady(false);
-        setNotice(
-          data?.error
-            ? `No se pudo guardar el pedido: ${data.error}`
-            : "No se pudo guardar el pedido en la base",
-        );
-        return;
-      }
+      await submitSalePayload(salePayload);
 
       setCart([]);
       setCustomer("Mostrador");
@@ -2974,9 +4048,34 @@ export function GestionLocalErp() {
       setSaleChannel("local");
       await loadData(`Pedido ${newSale.id} cobrado por ${formatCurrency(saleTotal)}`);
       setIsSupabaseReady(true);
-    } catch {
+    } catch (error) {
       setIsSupabaseReady(false);
-      setNotice("No se pudo guardar el pedido en la base");
+      const canQueue =
+        !window.navigator.onLine ||
+        error instanceof TypeError ||
+        Boolean((error as { retryable?: boolean }).retryable);
+
+      if (!canQueue) {
+        setNotice(
+          error instanceof Error
+            ? `No se pudo guardar el pedido: ${error.message}`
+            : "No se pudo guardar el pedido en la base",
+        );
+        return;
+      }
+
+      await enqueueOfflineSale(offlineRecord);
+      applyOfflineSaleLocally(offlineRecord);
+      await refreshOfflineSaleCount();
+      setCart([]);
+      setCustomer("Mostrador");
+      setDiscountValue("");
+      setDiscountMode("amount");
+      setIsDiscountOpen(false);
+      setSaleChannel("local");
+      setNotice(
+        `Sin internet: pedido ${newSale.id} guardado en esta PC para sincronizar`,
+      );
     } finally {
       setIsCharging(false);
     }
@@ -2989,14 +4088,11 @@ export function GestionLocalErp() {
       product.id,
     );
     if (!id || !product.name.trim() || !product.category.trim()) {
-      setNotice("Completá nombre y rubro del producto");
+      setNotice("Completá nombre y categoría del producto");
       return false;
     }
 
-    const response = await fetch("/api/erp/productos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const productPayload = {
         id,
         nombre: product.name.trim(),
         categoria: product.category.trim(),
@@ -3009,44 +4105,58 @@ export function GestionLocalErp() {
         max_gustos: product.maxFlavors,
         consumo_gustos: product.flavorUsage,
         stock_anterior: previousStock,
-      }),
-    });
+      };
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo guardar el producto");
+    try {
+      const result = await submitJsonMutation("producto", {
+        url: "/api/erp/productos",
+        method: "POST",
+        body: productPayload,
+      });
+
+      if (result.queued) {
+        const localProduct: Product = { ...product, id };
+        setProducts((current) =>
+          current.some((item) => item.id === id)
+            ? current.map((item) => (item.id === id ? localProduct : item))
+            : [localProduct, ...current],
+        );
+        return true;
+      }
+
+      await loadData("Producto guardado en stock");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo guardar el producto");
       return false;
     }
-
-    await loadData("Producto guardado en stock");
-    return true;
   };
 
   const performDeleteProduct = async (product: Product) => {
-    const response = await fetch("/api/erp/productos", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: product.id }),
-    });
+    try {
+      const result = await submitJsonMutation("eliminación de producto", {
+        url: "/api/erp/productos",
+        method: "DELETE",
+        body: { id: product.id },
+      });
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo eliminar el producto");
+      if (result.queued) {
+        setProducts((current) => current.filter((item) => item.id !== product.id));
+        return true;
+      }
+
+      await loadData("Producto eliminado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo eliminar el producto");
       return false;
     }
-
-    await loadData("Producto eliminado");
-    return true;
   };
 
   const deleteProduct = (product: Product) => {
     setDeleteConfirmation({
       title: "Eliminar producto",
-      description: `Vas a ocultar ${product.name} del catalogo activo. Las ventas viejas siguen guardadas.`,
+      description: `Vas a ocultar ${product.name} del catálogo activo. Las ventas viejas siguen guardadas.`,
       confirmLabel: "Eliminar producto",
       onConfirm: () => performDeleteProduct(product),
     });
@@ -3061,10 +4171,11 @@ export function GestionLocalErp() {
   };
 
   const saveExpenses = async () => {
-    const response = await fetch("/api/erp/gastos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const result = await submitJsonMutation("gastos", {
+        url: "/api/erp/gastos",
+        method: "POST",
+        body: {
         gastos: expenses.map((expense, index) => ({
           clave: expense.key,
           nombre: expense.label,
@@ -3073,15 +4184,15 @@ export function GestionLocalErp() {
           orden: index + 1,
           activo: true,
         })),
-      }),
-    });
+        },
+      });
 
-    if (!response.ok) {
+      if (!result.queued) {
+        await loadData("Gastos guardados y ganancia recalculada");
+      }
+    } catch {
       setNotice("No se pudieron guardar los gastos en la base");
-      return;
     }
-
-    await loadData("Gastos guardados y ganancia recalculada");
   };
 
   const saveEmployee = async (person: StaffForm) => {
@@ -3090,11 +4201,9 @@ export function GestionLocalErp() {
       return false;
     }
 
-    const response = await fetch("/api/erp/empleados", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        id: person.id,
+    const employeeId = person.id || createLocalUuid();
+    const employeePayload = {
+        id: employeeId,
         sucursal_id: DEFAULT_BRANCH_ID,
         nombre: person.name.trim(),
         rol: person.role.trim(),
@@ -3102,19 +4211,39 @@ export function GestionLocalErp() {
         sector: person.area.trim() || "General",
         estado: person.status,
         pin_codigo: person.pin?.trim() || null,
-      }),
-    });
+      };
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo guardar el empleado");
+    try {
+      const result = await submitJsonMutation("empleado", {
+        url: "/api/erp/empleados",
+        method: "POST",
+        body: employeePayload,
+      });
+
+      if (result.queued) {
+        const localEmployee: StaffMember = {
+          id: employeeId,
+          name: person.name.trim(),
+          role: person.role.trim(),
+          shift: person.shift.trim() || "Sin turno",
+          area: person.area.trim() || "General",
+          status: person.status,
+          pin: person.pin?.trim() || undefined,
+        };
+        setStaff((current) =>
+          current.some((item) => item.id === person.id)
+            ? current.map((item) => (item.id === person.id ? localEmployee : item))
+            : [localEmployee, ...current],
+        );
+        return true;
+      }
+
+      await loadData("Empleado guardado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo guardar el empleado");
       return false;
     }
-
-    await loadData("Empleado guardado");
-    return true;
   };
 
   const saveFlavor = async (flavor: FlavorForm) => {
@@ -3129,10 +4258,7 @@ export function GestionLocalErp() {
       flavor.id,
     );
 
-    const response = await fetch("/api/erp/gustos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const flavorPayload = {
         id,
         nombre: flavor.name.trim(),
         categoria: getFlavorCategoryName(flavor.category),
@@ -3141,38 +4267,60 @@ export function GestionLocalErp() {
         stock: flavor.stock,
         stock_minimo: flavor.minStock,
         unidad: flavor.unit.trim() || "porciones",
-      }),
-    });
+      };
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo guardar el gusto");
+    try {
+      const result = await submitJsonMutation("gusto", {
+        url: "/api/erp/gustos",
+        method: "POST",
+        body: flavorPayload,
+      });
+
+      if (result.queued) {
+        const localFlavor: IceCreamFlavor = {
+          ...flavor,
+          id,
+          name: flavor.name.trim(),
+          category: getFlavorCategoryName(flavor.category),
+          unit: flavor.unit.trim() || "porciones",
+        };
+        setIceCreamFlavors((current) =>
+          current.some((item) => item.id === id)
+            ? current.map((item) => (item.id === id ? localFlavor : item))
+            : [localFlavor, ...current],
+        );
+        return true;
+      }
+
+      await loadData("Stock de gustos actualizado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo guardar el gusto");
       return false;
     }
-
-    await loadData("Stock de gustos actualizado");
-    return true;
   };
 
   const performDeleteFlavor = async (flavor: IceCreamFlavor) => {
-    const response = await fetch("/api/erp/gustos", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: flavor.id }),
-    });
+    try {
+      const result = await submitJsonMutation("eliminación de gusto", {
+        url: "/api/erp/gustos",
+        method: "DELETE",
+        body: { id: flavor.id },
+      });
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo eliminar el gusto");
+      if (result.queued) {
+        setIceCreamFlavors((current) =>
+          current.filter((item) => item.id !== flavor.id),
+        );
+        return true;
+      }
+
+      await loadData("Gusto eliminado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo eliminar el gusto");
       return false;
     }
-
-    await loadData("Gusto eliminado");
-    return true;
   };
 
   const deleteFlavor = (flavor: IceCreamFlavor) => {
@@ -3201,57 +4349,106 @@ export function GestionLocalErp() {
     kilos: number,
     portionsLoaded: number,
   ) => {
-    const response = await fetch("/api/erp/tandas-gustos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const batchId = createLocalUuid();
+    const batchPayload = {
         accion: "cargar",
+        id: batchId,
         gusto_id: flavor.id,
         gusto: flavor.name,
         kilos,
         porciones_cargadas: portionsLoaded,
         stock_actual: flavor.stock,
         unidad: flavor.unit,
-      }),
-    });
+      };
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo cargar el balde");
+    try {
+      const result = await submitJsonMutation("balde", {
+        url: "/api/erp/tandas-gustos",
+        method: "POST",
+        body: batchPayload,
+      });
+
+      if (result.queued) {
+        setIceCreamFlavors((current) =>
+          current.map((item) =>
+            item.id === flavor.id
+              ? { ...item, stock: item.stock + portionsLoaded }
+              : item,
+          ),
+        );
+        setFlavorBatches((current) => [
+          {
+            id: batchId,
+            flavorId: flavor.id,
+            flavorName: flavor.name,
+            kilos,
+            portionsLoaded,
+            systemStockAtClose: null,
+            suggestedYield: null,
+            status: "activa",
+            createdAt: new Date().toISOString(),
+            closedAt: null,
+          },
+          ...current,
+        ]);
+        return true;
+      }
+
+      await loadData(`Balde cargado para ${flavor.name}`);
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo cargar el balde");
       return false;
     }
-
-    await loadData(`Balde cargado para ${flavor.name}`);
-    return true;
   };
 
   const closeFlavorBatch = async (batch: FlavorBatch, currentStock: number) => {
-    const response = await fetch("/api/erp/tandas-gustos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const closePayload = {
         accion: "cerrar",
         tanda_id: batch.id,
         gusto_id: batch.flavorId,
         stock_actual: currentStock,
-      }),
-    });
+      };
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
+    try {
+      const result = await submitJsonMutation("cierre de balde", {
+        url: "/api/erp/tandas-gustos",
+        method: "POST",
+        body: closePayload,
+      });
+
+      if (result.queued) {
+        setIceCreamFlavors((current) =>
+          current.map((item) =>
+            item.id === batch.flavorId ? { ...item, stock: 0 } : item,
+          ),
+        );
+        setFlavorBatches((current) =>
+          current.map((item) =>
+            item.id === batch.id
+              ? {
+                  ...item,
+                  status: "cerrada",
+                  closedAt: new Date().toISOString(),
+                  systemStockAtClose: currentStock,
+                }
+              : item,
+          ),
+        );
+        return true;
+      }
+
+      const data = (await result.response?.json().catch(() => null)) as {
+        sugerencia?: number;
       } | null;
-      setNotice(data?.error ?? "No se pudo cerrar la tanda");
+      await loadData(
+        `Tanda cerrada. Sugerencia siguiente: ${Math.round(data?.sugerencia ?? 0)} porciones`,
+      );
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo cerrar la tanda");
       return false;
     }
-
-    const data = (await response.json()) as { sugerencia?: number };
-    await loadData(
-      `Tanda cerrada. Sugerencia siguiente: ${Math.round(data.sugerencia ?? 0)} porciones`,
-    );
-    return true;
   };
 
   const registerAttendance = async (
@@ -3270,10 +4467,9 @@ export function GestionLocalErp() {
       return false;
     }
 
-    const response = await fetch("/api/erp/asistencias", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const attendanceId = createLocalUuid();
+    const attendancePayload = {
+        id: attendanceId,
         sucursal_id: DEFAULT_BRANCH_ID,
         empleado_id: person.id ?? null,
         empleado: person.name,
@@ -3282,21 +4478,43 @@ export function GestionLocalErp() {
           eventType === "salida"
             ? status?.shift ?? getShiftForStaff(person)
             : getShiftForStaff(person),
-      }),
-    });
+      };
 
-    if (!response.ok) {
+    try {
+      const result = await submitJsonMutation(`fichaje de ${person.name}`, {
+        url: "/api/erp/asistencias",
+        method: "POST",
+        body: attendancePayload,
+      });
+
+      if (result.queued) {
+        setAttendance((current) => [
+          {
+            id: attendanceId,
+            staffId: person.id ?? null,
+            employeeName: person.name,
+            eventType,
+            shift: attendancePayload.turno,
+            recordedAt: new Date().toISOString(),
+          },
+          ...current,
+        ]);
+        return true;
+      }
+
+      await loadData(`${person.name} registro ${eventType}`);
+      return true;
+    } catch {
       setNotice(`${person.name} registro ${eventType}; no se pudo guardar`);
       return false;
     }
-
-    await loadData(`${person.name} registro ${eventType}`);
-    return true;
   };
 
 const saveAttendanceRecord = async (record: AttendanceForm) => {
     const argentinaDate = parseArgentinaDateTimeInput(record.recordedAt);
+    const attendanceId = record.id || createLocalUuid();
     const payload = {
+      id: attendanceId,
       sucursal_id: DEFAULT_BRANCH_ID,
       empleado_id: record.staffId ?? null,
       empleado: record.employeeName,
@@ -3305,25 +4523,44 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
       creado: argentinaDate.toISOString(),
     };
 
-    const response = await fetch("/api/erp/asistencias", {
-      method: record.id ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(record.id ? { id: record.id, ...payload } : payload),
-    });
+    try {
+      const result = await submitJsonMutation("fichaje", {
+        url: "/api/erp/asistencias",
+        method: record.id ? "PATCH" : "POST",
+        body: payload,
+      });
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudo guardar el fichaje");
+      if (result.queued) {
+        const localAttendance: Attendance = {
+          id: attendanceId,
+          staffId: record.staffId ?? null,
+          employeeName: record.employeeName,
+          eventType: record.eventType,
+          shift: record.shift,
+          recordedAt: argentinaDate.toISOString(),
+        };
+        setAttendance((current) =>
+          record.id
+            ? current.map((item) => (item.id === record.id ? localAttendance : item))
+            : [localAttendance, ...current],
+        );
+        return true;
+      }
+
+      await loadData("Fichaje guardado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo guardar el fichaje");
       return false;
     }
-
-    await loadData("Fichaje guardado");
-    return true;
   };
 
   const handleCashierLogout = async () => {
+    if (!window.navigator.onLine) {
+      setIsEndingCashierSession(true);
+      return;
+    }
+
     setIsCashierActionLoading(true);
 
     const supabase = createClient();
@@ -3338,28 +4575,159 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
     methods: Record<string, number>,
     channels: Record<SaleChannel, number>,
   ) => {
-    const response = await fetch("/api/erp/comisiones", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    try {
+      const result = await submitJsonMutation("comisiones", {
+        url: "/api/erp/comisiones",
+        method: "POST",
+        body: {
         canales: channels,
         metodos: paymentMethods.map((nombre) => ({
           nombre,
           comision: methods[nombre] ?? 0,
         })),
-      }),
-    });
+        },
+      });
 
-    if (!response.ok) {
-      const data = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      setNotice(data?.error ?? "No se pudieron guardar las comisiones");
+      if (result.queued) {
+        setPaymentMethodCommissions(methods);
+        setChannelCommissions(channels);
+        return true;
+      }
+
+      await loadData("Comisiones actualizadas");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudieron guardar las comisiones");
       return false;
     }
+  };
 
-    await loadData("Comisiones actualizadas");
-    return true;
+  const expenseHistoryPayload = (snapshotExpenses: Expense[]) =>
+    snapshotExpenses.map((expense, index) => ({
+      activo: true,
+      categoria: expense.category,
+      clave: expense.key,
+      monto: expense.amount,
+      nombre: expense.label,
+      orden: index + 1,
+    }));
+
+  const editExpenseHistory = async (snapshot: ExpenseHistory) => {
+    try {
+      const result = await submitJsonMutation("historial de gastos", {
+        url: "/api/erp/gastos-historial",
+        method: "PUT",
+        body: {
+          id: snapshot.id,
+          gastos: expenseHistoryPayload(snapshot.expenses),
+        },
+      });
+
+      if (result.queued) {
+        setExpenseHistory((current) =>
+          current.map((item) => (item.id === snapshot.id ? snapshot : item)),
+        );
+        return true;
+      }
+
+      await loadData("Historial de gastos actualizado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo editar el historial de gastos");
+      return false;
+    }
+  };
+
+  const performDeleteExpenseHistory = async (snapshot: ExpenseHistory) => {
+    try {
+      const result = await submitJsonMutation("historial de gastos", {
+        url: "/api/erp/gastos-historial",
+        method: "DELETE",
+        body: { id: snapshot.id },
+      });
+
+      if (result.queued) {
+        setExpenseHistory((current) => current.filter((item) => item.id !== snapshot.id));
+        return true;
+      }
+
+      await loadData("Historial de gastos eliminado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo eliminar el historial de gastos");
+      return false;
+    }
+  };
+
+  const deleteExpenseHistory = (snapshot: ExpenseHistory) => {
+    setDeleteConfirmation({
+      title: "Eliminar historial de gastos",
+      description:
+        "Si eliminás el último guardado, los gastos actuales vuelven al historial anterior.",
+      confirmLabel: "Eliminar historial",
+      onConfirm: () => performDeleteExpenseHistory(snapshot),
+    });
+  };
+
+  const editCommissionHistory = async (snapshot: CommissionHistory) => {
+    try {
+      const result = await submitJsonMutation("historial de comisiones", {
+        url: "/api/erp/comisiones-historial",
+        method: "PUT",
+        body: {
+          id: snapshot.id,
+          canales: snapshot.channels,
+          metodos: snapshot.methods.map((method) => ({
+            nombre: method.name,
+            comision: method.rate,
+          })),
+        },
+      });
+
+      if (result.queued) {
+        setCommissionHistory((current) =>
+          current.map((item) => (item.id === snapshot.id ? snapshot : item)),
+        );
+        return true;
+      }
+
+      await loadData("Historial de comisiones actualizado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo editar el historial de comisiones");
+      return false;
+    }
+  };
+
+  const performDeleteCommissionHistory = async (snapshot: CommissionHistory) => {
+    try {
+      const result = await submitJsonMutation("historial de comisiones", {
+        url: "/api/erp/comisiones-historial",
+        method: "DELETE",
+        body: { id: snapshot.id },
+      });
+
+      if (result.queued) {
+        setCommissionHistory((current) => current.filter((item) => item.id !== snapshot.id));
+        return true;
+      }
+
+      await loadData("Historial de comisiones eliminado");
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "No se pudo eliminar el historial de comisiones");
+      return false;
+    }
+  };
+
+  const deleteCommissionHistory = (snapshot: CommissionHistory) => {
+    setDeleteConfirmation({
+      title: "Eliminar historial de comisiones",
+      description:
+        "Si eliminás el último guardado, las comisiones actuales vuelven al historial anterior.",
+      confirmLabel: "Eliminar historial",
+      onConfirm: () => performDeleteCommissionHistory(snapshot),
+    });
   };
 
   if (isBooting) {
@@ -3368,17 +4736,17 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
 
   return (
     <div
-      className="erp-theme min-h-screen bg-[var(--erp-bg)] text-[var(--erp-text)]"
+      className="erp-theme erp-app-shell bg-[var(--erp-bg)] text-[var(--erp-text)]"
       style={themeStyle}
     >
-      <div className="mx-auto flex min-h-screen w-full max-w-[1680px]">
-        <aside className="hidden w-72 shrink-0 border-r border-[var(--erp-border)] bg-[var(--erp-sidebar)] lg:flex lg:flex-col">
-          <div className="border-b border-[var(--erp-border)] p-5">
+      <div className="erp-app-frame mx-auto flex w-full max-w-[1680px]">
+        <aside className="erp-sidebar hidden shrink-0 border-r border-[var(--erp-border)] bg-[var(--erp-sidebar)] lg:flex lg:flex-col">
+          <div className="erp-sidebar-header border-b border-[var(--erp-border)] p-5">
             <div className="flex items-center gap-3">
               <BrandLogo theme={themeSettings} />
               <div>
                 <p
-                  className="text-2xl leading-tight text-[var(--erp-text)]"
+                  className="erp-sidebar-brand text-2xl leading-tight text-[var(--erp-text)]"
                   style={{ fontFamily: "var(--erp-brand-font)" }}
                 >
                   {themeSettings.brandName}
@@ -3387,7 +4755,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             </div>
           </div>
 
-          <nav className="flex flex-1 flex-col gap-5 p-4">
+          <nav className="erp-sidebar-nav flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
             {navGroups.map((group) => {
               const groupItems = group.items
                 .map((id) => visibleNavItems.find((item) => item.id === id))
@@ -3413,7 +4781,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                       (sessionUser?.role === "admin" ||
                         sessionUser?.role === "dueno") && (
                         <button
-                          className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold text-[var(--erp-muted)] transition hover:bg-white/5 hover:text-[var(--erp-text)]"
+                          className="erp-nav-button flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold text-[var(--erp-muted)] transition hover:bg-white/5 hover:text-[var(--erp-text)]"
                           onClick={() => setIsUsersOpen(true)}
                           type="button"
                         >
@@ -3427,7 +4795,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             })}
           </nav>
 
-          <div className="border-t border-[var(--erp-border)] p-4">
+          <div className="erp-sidebar-footer shrink-0 border-t border-[var(--erp-border)] p-4">
             <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-3">
               <div className="flex items-center gap-2 text-sm font-semibold text-emerald-200">
                 <CheckCircle2 className="size-4" />
@@ -3437,24 +4805,52 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
           </div>
         </aside>
 
-        <main className="min-w-0 flex-1">
-          <header className="sticky top-0 z-20 border-b border-[var(--erp-border)] bg-[var(--erp-header)] px-4 py-4 backdrop-blur md:px-6">
+        <main className="erp-main min-w-0 flex-1">
+          <header className="erp-topbar z-20 shrink-0 border-b border-[var(--erp-border)] bg-[var(--erp-header)] px-4 py-4 backdrop-blur md:px-6">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">
+                <p className="erp-header-kicker text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">
                   {themeSettings.brandSubtitle}
                 </p>
                 <h1
-                  className="mt-1 text-4xl leading-none tracking-normal text-[var(--erp-text)] md:text-5xl"
+                  className="erp-header-title mt-1 text-4xl leading-none tracking-normal text-[var(--erp-text)] md:text-5xl"
                   style={{ fontFamily: "var(--erp-brand-font)" }}
                 >
                   {themeSettings.brandName}
                 </h1>
               </div>
 
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="erp-header-actions flex flex-wrap items-center justify-end gap-2">
                 {sessionUser ? (
                   <>
+                    <div
+                      className={cn(
+                        "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold",
+                        isOnline
+                          ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
+                          : "border-amber-300/30 bg-amber-300/10 text-amber-100",
+                      )}
+                    >
+                      {isOnline ? (
+                        <CheckCircle2 className="size-4" />
+                      ) : (
+                        <TriangleAlert className="size-4" />
+                      )}
+                      {isOnline ? "Online" : "Sin internet"}
+                      {pendingOfflineSales > 0 && (
+                        <span className="rounded-md bg-black/25 px-2 py-0.5 text-xs">
+                          {isSyncingOfflineSales
+                            ? "Sincronizando..."
+                            : `${pendingOfflineSales} pendientes`}
+                        </span>
+                      )}
+                    </div>
+                    <DesktopUpdateButton
+                      onCheck={checkDesktopUpdate}
+                      onDownload={downloadDesktopUpdate}
+                      onInstall={installDesktopUpdate}
+                      update={desktopUpdate}
+                    />
                     <Button
                       className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                       onClick={() => setIsHelpOpen(true)}
@@ -3490,7 +4886,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               </div>
             </div>
 
-            <div className="mt-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
+            <div className="erp-mobile-top-nav mt-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">
               {visibleNavItems.map((item) => (
                 <NavButton
                   key={item.id}
@@ -3503,7 +4899,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             </div>
           </header>
 
-          <section className="px-4 py-5 md:px-6">
+          <section className="erp-content min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6">
             {activeView === "caja" && (
               <CajaView
                 cartItems={cartItems}
@@ -3549,14 +4945,22 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             {activeView === "inicio" && (
               <InicioView
                 attendanceStatusMap={attendanceStatusMap}
-                commissionCost={commissionCost}
-                fixedExpenses={fixedExpenses}
+                channelCommissions={channelCommissions}
+                commissionHistory={commissionHistory}
+                expenses={expenses}
+                expenseHistory={expenseHistory}
                 lowFlavorStock={lowFlavorStock}
                 lowStock={lowStock}
-                netProfit={netProfit}
+                paymentMethodCommissions={paymentMethodCommissions}
+                saleItems={saleItems}
                 sales={sales}
-                sessionUser={sessionUser}
-                soldProductCost={soldProductCost}
+              />
+            )}
+
+            {activeView === "cierre-caja" && (
+              <CierreCajaView
+                onOfflineQueueChange={refreshOfflineSaleCount}
+                sales={sales}
               />
             )}
 
@@ -3567,6 +4971,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             {activeView === "analisis" && (
               <AnalisisView
                 channelCommissions={channelCommissions}
+                commissionHistory={commissionHistory}
                 expenses={expenses}
                 expenseHistory={expenseHistory}
                 paymentMethodCommissions={paymentMethodCommissions}
@@ -3579,6 +4984,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             {activeView === "historial" && (
               <HistorialView
                 channelCommissions={channelCommissions}
+                commissionHistory={commissionHistory}
                 expenses={expenses}
                 expenseHistory={expenseHistory}
                 paymentMethodCommissions={paymentMethodCommissions}
@@ -3590,10 +4996,16 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             {activeView === "finanzas" && (
               <FinanzasView
                 expenses={expenses}
+                expenseHistory={expenseHistory}
                 fixedExpenses={fixedExpenses}
                 grossRevenue={grossRevenue}
                 commissionCost={commissionCost}
                 channelCommissions={channelCommissions}
+                commissionHistory={commissionHistory}
+                deleteCommissionHistory={deleteCommissionHistory}
+                deleteExpenseHistory={deleteExpenseHistory}
+                editCommissionHistory={editCommissionHistory}
+                editExpenseHistory={editExpenseHistory}
                 netProfit={netProfit}
                 paymentMethodCommissions={paymentMethodCommissions}
                 paymentMethods={paymentMethods}
@@ -3662,7 +5074,8 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
           </section>
 
           <HelpModal
-            help={activeHelp}
+            activeView={activeView}
+            groups={helpGuideGroups}
             isOpen={isHelpOpen}
             onClose={() => setIsHelpOpen(false)}
           />
@@ -3684,6 +5097,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
             onClose={() => setIsUsersOpen(false)}
           />
           <CashierExitModal
+            isOnline={isOnline}
             isLoading={isCashierActionLoading}
             isOpen={isEndingCashierSession}
             onClose={() => {
@@ -3731,7 +5145,7 @@ function NavButton({
   return (
     <button
       className={cn(
-        "flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold transition",
+        "erp-nav-button flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold transition",
         active
           ? "bg-[var(--erp-primary)] text-[var(--erp-primary-text)] shadow-[0_0_24px_var(--erp-primary-soft)]"
           : "text-[var(--erp-muted)] hover:bg-white/5 hover:text-[var(--erp-text)]",
@@ -3936,11 +5350,13 @@ export function CashierSelectionModal({
 }
 
 function CashierExitModal({
+  isOnline,
   isLoading,
   isOpen,
   onClose,
   onConfirm,
 }: {
+  isOnline: boolean;
   isLoading: boolean;
   isOpen: boolean;
   onClose: () => void;
@@ -3952,15 +5368,26 @@ function CashierExitModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0d0f10] shadow-2xl">
         <div className="border-b border-white/10 px-5 py-4">
-          <p className="text-lg font-semibold text-zinc-100">Cerrar sesion</p>
+          <p className="text-lg font-semibold text-zinc-100">Cerrar sesión</p>
           <p className="mt-1 text-sm text-zinc-400">
-            Se va a cerrar la cuenta actual en esta computadora.
+            {isOnline
+              ? "Se va a cerrar la cuenta actual en esta computadora."
+              : "No se puede cerrar sesión mientras la caja está sin internet."}
           </p>
         </div>
 
         <div className="p-5">
-          <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-4 text-sm text-cyan-100">
-            Las entradas y salidas de empleados se manejan desde la seccion Empleados.
+          <div
+            className={cn(
+              "rounded-xl border p-4 text-sm",
+              isOnline
+                ? "border-cyan-300/20 bg-cyan-300/10 text-cyan-100"
+                : "border-amber-300/30 bg-amber-300/10 text-amber-100",
+            )}
+          >
+            {isOnline
+              ? "Las entradas y salidas de empleados se manejan desde la sección Empleados."
+              : "Si cerrás sesión sin conexión, después no vas a poder iniciar sesión hasta que vuelva internet. Por seguridad, la caja queda abierta para que puedan seguir trabajando."}
           </div>
         </div>
 
@@ -3974,14 +5401,16 @@ function CashierExitModal({
           >
             Cancelar
           </Button>
-          <Button
-            className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-            disabled={isLoading}
-            onClick={onConfirm}
-            type="button"
-          >
-            Cerrar sesion
-          </Button>
+          {isOnline && (
+            <Button
+              className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+              disabled={isLoading}
+              onClick={onConfirm}
+              type="button"
+            >
+              Cerrar sesión
+            </Button>
+          )}
         </div>
       </div>
     </div>
@@ -4208,25 +5637,8 @@ function CajaView({
   const showCategoryBrowser = !categorySelected && !showLowStockOnly;
   const categoryCards = realCategories.map((item) => ({
       id: item,
-      label: item,
-      icon:
-        item === "Helado"
-          ? Snowflake
-          : item === "Cafe"
-            ? Coffee
-            : item === "Salado"
-              ? Store
-              : item === "Dulce"
-                ? ReceiptText
-                : item === "Bebida"
-                  ? CreditCard
-                  : item === "Aperitivo"
-                    ? WalletCards
-                    : item === "Desayuno"
-                      ? SunMedium
-                      : item === "Promo"
-                        ? BadgeDollarSign
-                        : Package,
+      label: formatCategoryLabel(item),
+      icon: getProductCategoryIcon(item),
     }));
 
   useEffect(() => {
@@ -4305,14 +5717,14 @@ function CajaView({
               </div>
             )}
 
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="erp-category-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {categoryCards.map((item) => {
               const Icon = item.icon;
 
               return (
               <button
                 className={cn(
-                  "flex min-h-28 items-center gap-4 rounded-lg border p-4 text-left transition",
+                  "erp-category-card flex min-h-28 items-center gap-4 rounded-lg border p-4 text-left transition",
                   "border-white/10 bg-white/5 text-zinc-300 hover:border-cyan-300/40 hover:bg-white/10",
                 )}
                 key={item.id}
@@ -4358,7 +5770,7 @@ function CajaView({
                   </div>
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-zinc-100">
-                      {showLowStockOnly && !categorySelected ? "Bajo stock" : category}
+                      {showLowStockOnly && !categorySelected ? "Bajo stock" : formatCategoryLabel(category)}
                     </p>
                     <p className="text-sm text-zinc-500">
                       {showLowStockOnly && lowStockView === "gustos"
@@ -4441,7 +5853,7 @@ function CajaView({
             )}
 
             {(!showLowStockOnly || lowStockView === "productos") && (
-              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+              <div className="erp-product-grid grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                 {displayedProducts.map((product) => {
                 const quantityInCart = cartQuantityByProduct[product.id] ?? 0;
                 const reachedLimit = quantityInCart >= product.stock;
@@ -4451,7 +5863,7 @@ function CajaView({
                 return (
                   <button
                     className={cn(
-                      "group overflow-hidden rounded-lg border text-left transition disabled:cursor-not-allowed",
+                      "erp-product-card group overflow-hidden rounded-lg border text-left transition disabled:cursor-not-allowed",
                       unavailable
                         ? "border-white/5 bg-zinc-900/70 opacity-45 grayscale"
                         : isLow
@@ -4510,7 +5922,7 @@ function CajaView({
             )}
 
             {showLowStockOnly && lowStockView === "gustos" && (
-              <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+              <div className="erp-product-grid grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
                 {displayedLowFlavors.map((flavor) => (
                   <div
                     className="rounded-lg border border-amber-300/30 bg-[#191512] p-4"
@@ -4529,7 +5941,7 @@ function CajaView({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2">
                           <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
-                            {flavor.category}
+                            {formatCategoryLabel(flavor.category)}
                           </Badge>
                         </div>
                       </div>
@@ -4578,10 +5990,10 @@ function CajaView({
         )}
 
         {selectedProduct && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-            <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
+          <div className="erp-flavor-modal fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+            <div className="erp-flavor-card w-full max-w-3xl overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
               <div className="grid md:grid-cols-[260px_1fr]">
-                <div className="relative min-h-56 bg-black">
+                <div className="erp-flavor-image relative min-h-56 bg-black">
                   {selectedProduct.imageUrl ? (
                     <div
                       aria-label={selectedProduct.name}
@@ -4611,7 +6023,7 @@ function CajaView({
                   </div>
                 </div>
 
-                <div className="p-4">
+                <div className="erp-flavor-body p-4">
                   {selectedProduct.maxFlavors > 0 && selectedProduct.flavorUsage > 0 && (
                     <div className="mb-3 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
                       Este producto descuenta {selectedProduct.flavorUsage} porciones estimadas en total.
@@ -4663,18 +6075,18 @@ function CajaView({
                     )}
                   </div>
 
-                  <div className="max-h-[420px] space-y-4 overflow-y-auto pr-1">
+                  <div className="erp-flavor-list max-h-[420px] space-y-4 overflow-y-auto pr-1">
                     {visibleFlavorGroups.map((group) => (
                       <div className="space-y-2" key={group.category}>
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-semibold text-zinc-100">
-                            {group.category}
+                            {formatCategoryLabel(group.category)}
                           </p>
                           <p className="text-xs text-zinc-500">
                             {group.items.length} gusto{group.items.length === 1 ? "" : "s"}
                           </p>
                         </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="erp-flavor-grid grid gap-2 sm:grid-cols-2">
                           {group.items.map((flavor) => {
                             const selectedCount = selectedFlavors.filter(
                               (item) => item === flavor.name,
@@ -4734,7 +6146,7 @@ function CajaView({
                     )}
                   </div>
 
-                  <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <div className="erp-flavor-actions mt-4 flex flex-col gap-2 sm:flex-row">
                     <Button
                       className="h-11 flex-1 bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
                       disabled={selectedFlavors.length !== selectedProduct.maxFlavors}
@@ -4760,7 +6172,7 @@ function CajaView({
       </DarkPanel>
 
       <div>
-        <DarkPanel className="xl:sticky xl:top-28">
+        <DarkPanel className="erp-order-panel xl:sticky xl:top-28">
           <PanelHeader
             icon={ReceiptText}
             title="Pedido"
@@ -5129,7 +6541,7 @@ function HistorialVentasView({
                         </p>
                         {extraItems > 0 && (
                           <p className="mt-1 text-xs text-zinc-500">
-                            + {extraItems} producto{extraItems === 1 ? "" : "s"} mas
+                            + {extraItems} producto{extraItems === 1 ? "" : "s"} más
                           </p>
                         )}
                         <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-400">
@@ -5256,34 +6668,29 @@ function HistorialVentasView({
 
 function InicioView({
   attendanceStatusMap,
-  commissionCost,
-  fixedExpenses,
+  channelCommissions,
+  commissionHistory,
+  expenses,
+  expenseHistory,
   lowFlavorStock,
   lowStock,
-  netProfit,
+  paymentMethodCommissions,
+  saleItems,
   sales,
-  sessionUser,
-  soldProductCost,
 }: {
   attendanceStatusMap: Map<string, AttendanceStatus>;
-  commissionCost: number;
-  fixedExpenses: number;
+  channelCommissions: Record<SaleChannel, number>;
+  commissionHistory: CommissionHistory[];
+  expenses: Expense[];
+  expenseHistory: ExpenseHistory[];
   lowFlavorStock: IceCreamFlavor[];
   lowStock: Product[];
-  netProfit: number;
+  paymentMethodCommissions: Record<string, number>;
+  saleItems: SaleItem[];
   sales: Sale[];
-  sessionUser: SessionUser | null;
-  soldProductCost: number;
 }) {
-  const todayStart = startOfDay(new Date());
-  const todayEnd = endOfDay(new Date());
+  const { start: todayStart, end: todayEnd } = getOperationalDayRange(new Date());
   const currentShift = getCurrentShift();
-  const [cashCount, setCashCount] = useState("");
-  const [cashNote, setCashNote] = useState("");
-  const [isSavingClose, setIsSavingClose] = useState(false);
-  const [closeMessage, setCloseMessage] = useState("");
-  const [lastClose, setLastClose] = useState<CashCloseRow | null>(null);
-  const canSeeFinancials = sessionUser?.role === "admin" || sessionUser?.role === "dueno";
   const todaySales = sales.filter((sale) => {
     const date = new Date(sale.createdAt);
     return date >= todayStart && date <= todayEnd;
@@ -5291,26 +6698,180 @@ function InicioView({
   const shiftSales = todaySales.filter((sale) =>
     saleMatchesShiftFilter(sale, currentShift),
   );
+  const todaySaleIds = new Set(todaySales.map((sale) => sale.id));
+  const todaySaleItems = saleItems.filter((item) => todaySaleIds.has(item.saleId));
   const todayRevenue = todaySales.reduce((total, sale) => total + sale.total, 0);
-  const shiftRevenue = shiftSales.reduce((total, sale) => total + sale.total, 0);
-  const shiftCash = shiftSales
-    .filter((sale) => sale.method.toLowerCase() === "efectivo")
-    .reduce((total, sale) => total + sale.total, 0);
-  const countedCash = Math.max(0, Number(cashCount || 0));
-  const cashDifference = countedCash - shiftCash;
+  const todaySoldProductCost = todaySaleItems.reduce(
+    (total, item) => total + item.cost * item.quantity,
+    0,
+  );
+  const todayFixedExpenses = calculateExpenseBreakdownBetween(
+    todayStart,
+    todayEnd,
+    expenses,
+    expenseHistory,
+  ).fixed;
+  const todayCommissionCost = calculateCommissionCost(
+    todaySales,
+    paymentMethodCommissions,
+    channelCommissions,
+    commissionHistory,
+  );
+  const todayNetProfit =
+    todayRevenue - todaySoldProductCost - todayFixedExpenses - todayCommissionCost;
   const workingStatuses = Array.from(attendanceStatusMap.values()).filter(
     (status) => status.isWorking,
   );
   const alertStatuses = workingStatuses.filter((status) => status.alert !== "none");
 
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          icon={ArrowUpCircle}
+          label="Vendido hoy"
+          tone="cyan"
+          value={formatCurrency(todayRevenue)}
+        />
+        <MetricCard
+          icon={ReceiptText}
+          label={`Ventas ${currentShift === "manana" ? "mañana" : "tarde"}`}
+          tone="green"
+          value={String(shiftSales.length)}
+        />
+        <MetricCard
+          icon={Users}
+          label="Trabajando ahora"
+          tone={alertStatuses.length ? "amber" : "green"}
+          value={String(workingStatuses.length)}
+        />
+        <MetricCard
+          icon={TriangleAlert}
+          label="Reposición"
+          tone={lowStock.length || lowFlavorStock.length ? "amber" : "neutral"}
+          value={String(lowStock.length + lowFlavorStock.length)}
+        />
+      </div>
+
+      <DarkPanel>
+        <PanelHeader icon={LayoutDashboard} title="Hoy" />
+        <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+          <FinanceLine
+            icon={ArrowUpCircle}
+            label="Total vendido"
+            tone="cyan"
+            value={todayRevenue}
+          />
+          <FinanceLine
+            icon={ArrowDownCircle}
+            label="Costo vendido"
+            tone="amber"
+            value={todaySoldProductCost}
+          />
+          <FinanceLine
+            icon={CreditCard}
+            label="Comisiones"
+            tone="amber"
+            value={todayCommissionCost}
+          />
+          <FinanceLine
+            icon={WalletCards}
+            label="Gastos fijos del día"
+            tone="amber"
+            value={todayFixedExpenses}
+          />
+          <div
+            className={cn(
+              "rounded-lg border p-4 sm:col-span-2 xl:col-span-4",
+              todayNetProfit >= 0
+                ? "border-emerald-300/20 bg-emerald-300/10"
+                : "border-rose-300/20 bg-rose-300/10",
+            )}
+          >
+            <p className={cn("text-sm", todayNetProfit >= 0 ? "text-emerald-100" : "text-rose-100")}>
+              Ganancia real
+            </p>
+            <p className={cn("mt-2 text-3xl font-semibold", todayNetProfit >= 0 ? "text-emerald-200" : "text-rose-200")}>
+              {formatCurrency(todayNetProfit)}
+            </p>
+          </div>
+        </div>
+      </DarkPanel>
+    </div>
+  );
+}
+
+function CierreCajaView({
+  onOfflineQueueChange,
+  sales,
+}: {
+  onOfflineQueueChange: () => Promise<void>;
+  sales: Sale[];
+}) {
+  const { start: todayStart, end: todayEnd } = getOperationalDayRange(new Date());
+  const currentShift = getCurrentShift();
+  const [cashCount, setCashCount] = useState("");
+  const [cashNote, setCashNote] = useState("");
+  const [isSavingClose, setIsSavingClose] = useState(false);
+  const [closeMessage, setCloseMessage] = useState("");
+  const [lastClose, setLastClose] = useState<CashCloseRow | null>(null);
+  const todaySales = sales.filter((sale) => {
+    const date = new Date(sale.createdAt);
+    return date >= todayStart && date <= todayEnd;
+  });
+  const shiftSales = todaySales.filter((sale) =>
+    saleMatchesShiftFilter(sale, currentShift),
+  );
+  const shiftRevenue = shiftSales.reduce((total, sale) => total + sale.total, 0);
+  const shiftCash = shiftSales
+    .filter((sale) => sale.method.toLowerCase() === "efectivo")
+    .reduce((total, sale) => total + sale.total, 0);
+  const countedCash = Math.max(0, Number(cashCount || 0));
+
   const loadLastClose = async () => {
     const response = await fetch("/api/erp/cierres-caja").catch(() => null);
-    if (!response?.ok) return;
+    const pendingCloses = await getOfflineCashCloses();
+    const lastPendingClose = pendingCloses.at(-1);
+    if (!response?.ok) {
+      if (lastPendingClose) {
+        setLastClose({
+          id: lastPendingClose.payload.id,
+          fecha_operativa: lastPendingClose.payload.fecha_operativa,
+          turno: lastPendingClose.payload.turno,
+          total_sistema: lastPendingClose.payload.total_sistema,
+          efectivo_sistema: lastPendingClose.payload.efectivo_sistema,
+          efectivo_contado: lastPendingClose.payload.efectivo_contado,
+          diferencia:
+            lastPendingClose.payload.efectivo_contado -
+            lastPendingClose.payload.efectivo_sistema,
+          ventas: lastPendingClose.payload.ventas,
+          observacion: lastPendingClose.payload.observacion.trim() || null,
+          creado: lastPendingClose.createdAt,
+        });
+      }
+      return;
+    }
 
     const data = (await response.json().catch(() => null)) as {
       cierre?: CashCloseRow | null;
     } | null;
     setLastClose(data?.cierre ?? null);
+    if (lastPendingClose) {
+      setLastClose({
+        id: lastPendingClose.payload.id,
+        fecha_operativa: lastPendingClose.payload.fecha_operativa,
+        turno: lastPendingClose.payload.turno,
+        total_sistema: lastPendingClose.payload.total_sistema,
+        efectivo_sistema: lastPendingClose.payload.efectivo_sistema,
+        efectivo_contado: lastPendingClose.payload.efectivo_contado,
+        diferencia:
+          lastPendingClose.payload.efectivo_contado -
+          lastPendingClose.payload.efectivo_sistema,
+        ventas: lastPendingClose.payload.ventas,
+        observacion: lastPendingClose.payload.observacion.trim() || null,
+        creado: lastPendingClose.createdAt,
+      });
+    }
   };
 
   useEffect(() => {
@@ -5322,136 +6883,100 @@ function InicioView({
     setCloseMessage("");
 
     const now = new Date();
-    const nowParts = getArgentinaDateParts(now);
-    const operationalDate =
-      nowParts.hour < SHIFT_DAY_START_HOUR
-        ? addArgentinaDays(startOfDay(now), -1)
-        : startOfDay(now);
-    const parts = getArgentinaDateParts(operationalDate);
-    const response = await fetch("/api/erp/cierres-caja", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fecha_operativa: `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`,
-        turno: currentShift,
-        total_sistema: shiftRevenue,
-        efectivo_sistema: shiftCash,
-        efectivo_contado: countedCash,
-        ventas: shiftSales.length,
-        observacion: cashNote,
-      }),
-    }).catch(() => null);
+    const operationalDay = getOperationalDayRange(now);
+    const parts = getArgentinaDateParts(operationalDay.start);
+    const payload: OfflineCashClosePayload = {
+      id: createLocalUuid(),
+      fecha_operativa: `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}`,
+      turno: currentShift,
+      total_sistema: shiftRevenue,
+      efectivo_sistema: shiftCash,
+      efectivo_contado: countedCash,
+      ventas: shiftSales.length,
+      observacion: cashNote,
+    };
+    const createdAt = now.toISOString();
+    const localClose: CashCloseRow = {
+      id: payload.id,
+      fecha_operativa: payload.fecha_operativa,
+      turno: payload.turno,
+      total_sistema: payload.total_sistema,
+      efectivo_sistema: payload.efectivo_sistema,
+      efectivo_contado: payload.efectivo_contado,
+      diferencia: payload.efectivo_contado - payload.efectivo_sistema,
+      ventas: payload.ventas,
+      observacion: payload.observacion.trim() || null,
+      creado: createdAt,
+    };
 
-    setIsSavingClose(false);
+    try {
+      const response = await fetch("/api/erp/cierres-caja", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!response?.ok) {
-      setCloseMessage("No se pudo guardar el cierre");
-      return;
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        const error = new Error(data?.error ?? "No se pudo guardar el cierre") as Error & {
+          retryable?: boolean;
+        };
+        error.retryable = response.status >= 500;
+        throw error;
+      }
+
+      const data = (await response.json().catch(() => null)) as {
+        cierre?: CashCloseRow | null;
+      } | null;
+      setLastClose(data?.cierre ?? localClose);
+
+      setCloseMessage("Cierre guardado");
+      setCashCount("");
+      setCashNote("");
+    } catch (error) {
+      const canQueue =
+        !window.navigator.onLine ||
+        error instanceof TypeError ||
+        Boolean((error as { retryable?: boolean }).retryable);
+
+      if (!canQueue) {
+        setCloseMessage(
+          error instanceof Error ? error.message : "No se pudo guardar el cierre",
+        );
+        setIsSavingClose(false);
+        return;
+      }
+
+      const offlineRecord: OfflineCashCloseRecord = {
+        id: payload.id,
+        createdAt,
+        payload,
+      };
+      await enqueueOfflineCashClose(offlineRecord);
+      await onOfflineQueueChange();
+      setLastClose(localClose);
+      setCloseMessage("Sin internet: cierre guardado en esta PC para sincronizar");
+      setCashCount("");
+      setCashNote("");
+    } finally {
+      setIsSavingClose(false);
     }
-
-    const data = (await response.json().catch(() => null)) as {
-      cierre?: CashCloseRow | null;
-    } | null;
-    setLastClose(data?.cierre ?? null);
-
-    setCloseMessage("Cierre guardado");
-    setCashCount("");
-    setCashNote("");
   };
 
   return (
-    <div className="space-y-5">
-      {canSeeFinancials && (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            icon={ArrowUpCircle}
-            label="Vendido hoy"
-            tone="cyan"
-            value={formatCurrency(todayRevenue)}
-          />
-          <MetricCard
-            icon={ReceiptText}
-            label={`Ventas ${currentShift === "manana" ? "manana" : "tarde"}`}
-            tone="green"
-            value={String(shiftSales.length)}
-          />
-          <MetricCard
-            icon={Users}
-            label="Trabajando ahora"
-            tone={alertStatuses.length ? "amber" : "green"}
-            value={String(workingStatuses.length)}
-          />
-          <MetricCard
-            icon={TriangleAlert}
-            label="Reposicion"
-            tone={lowStock.length || lowFlavorStock.length ? "amber" : "neutral"}
-            value={String(lowStock.length + lowFlavorStock.length)}
-          />
-        </div>
-      )}
-
-      <div
-        className={cn(
-          "grid gap-5",
-          canSeeFinancials ? "xl:grid-cols-[1fr_0.9fr]" : "xl:grid-cols-[0.9fr_1.1fr]",
-        )}
-      >
-        {canSeeFinancials && (
-        <DarkPanel>
-          <PanelHeader icon={LayoutDashboard} title="Hoy" />
-          <div className="grid gap-3 p-4 sm:grid-cols-2">
-            <FinanceLine
-              icon={ArrowUpCircle}
-              label="Total vendido"
-              tone="cyan"
-              value={todayRevenue}
-            />
-            <FinanceLine
-              icon={ArrowDownCircle}
-              label="Costo vendido"
-              tone="amber"
-              value={soldProductCost}
-            />
-            <FinanceLine
-              icon={CreditCard}
-              label="Comisiones"
-              tone="amber"
-              value={commissionCost}
-            />
-            <FinanceLine
-              icon={WalletCards}
-              label="Gastos fijos"
-              tone="amber"
-              value={fixedExpenses}
-            />
-            <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4 sm:col-span-2">
-              <p className="text-sm text-emerald-100">Ganancia real</p>
-              <p className="mt-2 text-3xl font-semibold text-emerald-200">
-                {formatCurrency(netProfit)}
-              </p>
-            </div>
-          </div>
-        </DarkPanel>
-        )}
-
+    <div className="mx-auto grid w-full max-w-5xl gap-5 xl:grid-cols-[1fr_0.9fr]">
         <DarkPanel>
           <PanelHeader icon={DollarSign} title="Cierre de caja" />
           <div className="space-y-4 p-4">
-            <div className={cn("grid gap-3", canSeeFinancials && "sm:grid-cols-2")}>
+            <div className="grid gap-3">
               <div className="rounded-lg border border-white/10 bg-black/20 p-3">
                 <p className="text-xs uppercase text-zinc-500">Turno</p>
                 <p className="mt-1 font-semibold text-zinc-100">
-                  {currentShift === "manana" ? "Manana" : "Tarde"}
+                  {currentShift === "manana" ? "Mañana" : "Tarde"}
                 </p>
               </div>
-              {canSeeFinancials && (
-              <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                <p className="text-xs uppercase text-zinc-500">Efectivo sistema</p>
-                <p className="mt-1 font-semibold text-zinc-100">
-                  {formatCurrency(shiftCash)}
-                </p>
-              </div>
-              )}
             </div>
             <InlineInput
               label="Efectivo contado"
@@ -5467,20 +6992,6 @@ function InicioView({
                 value={cashNote}
               />
             </label>
-            {canSeeFinancials && (
-              <div
-                className={cn(
-                  "rounded-lg border p-3 text-sm font-semibold",
-                  cashDifference === 0
-                    ? "border-white/10 bg-black/20 text-zinc-200"
-                    : cashDifference > 0
-                      ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
-                      : "border-rose-300/20 bg-rose-300/10 text-rose-100",
-                )}
-              >
-                Diferencia: {formatCurrency(cashDifference)}
-              </div>
-            )}
             <Button
               className="h-11 w-full bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
               disabled={isSavingClose}
@@ -5496,7 +7007,7 @@ function InicioView({
         </DarkPanel>
 
         <DarkPanel>
-          <PanelHeader icon={ReceiptText} title="Ultimo cierre cargado" />
+          <PanelHeader icon={ReceiptText} title="Último cierre cargado" />
           <div className="p-4">
             {lastClose ? (
               <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
@@ -5504,7 +7015,7 @@ function InicioView({
                   <div>
                     <p className="text-xs uppercase text-zinc-500">Turno</p>
                     <p className="mt-1 font-semibold text-zinc-100">
-                      {lastClose.turno === "manana" ? "Manana" : "Tarde"}
+                      {lastClose.turno === "manana" ? "Mañana" : "Tarde"}
                     </p>
                   </div>
                   <div className="text-right">
@@ -5523,21 +7034,12 @@ function InicioView({
                       {formatCurrency(toNumber(lastClose.efectivo_contado))}
                     </p>
                   </div>
-                  {canSeeFinancials && (
-                    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                      <p className="text-xs uppercase text-zinc-500">Diferencia</p>
-                      <p
-                        className={cn(
-                          "mt-1 font-semibold",
-                          toNumber(lastClose.diferencia) >= 0
-                            ? "text-emerald-200"
-                            : "text-rose-200",
-                        )}
-                      >
-                        {formatCurrency(toNumber(lastClose.diferencia))}
-                      </p>
-                    </div>
-                  )}
+                  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-xs uppercase text-zinc-500">Ventas del turno</p>
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {lastClose.ventas}
+                    </p>
+                  </div>
                 </div>
                 {lastClose.observacion && (
                   <p className="text-sm text-zinc-400">{lastClose.observacion}</p>
@@ -5546,19 +7048,19 @@ function InicioView({
             ) : (
               <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center">
                 <p className="text-sm text-zinc-500">
-                  Todavia no cargaste un cierre.
+                  Todavía no cargaste un cierre.
                 </p>
               </div>
             )}
           </div>
         </DarkPanel>
-      </div>
     </div>
   );
 }
 
 function AnalisisView({
   channelCommissions,
+  commissionHistory,
   expenses,
   expenseHistory,
   paymentMethodCommissions,
@@ -5567,6 +7069,7 @@ function AnalisisView({
   sales,
 }: {
   channelCommissions: Record<SaleChannel, number>;
+  commissionHistory: CommissionHistory[];
   expenses: Expense[];
   expenseHistory: ExpenseHistory[];
   paymentMethodCommissions: Record<string, number>;
@@ -5592,6 +7095,7 @@ function AnalisisView({
     return saleDate >= periodStart && saleDate <= periodEnd;
   });
   const periodGrossRevenue = periodSales.reduce((total, sale) => total + sale.total, 0);
+  const periodSaleIds = new Set(periodSales.map((sale) => sale.id));
   const expenseBreakdown = calculateExpenseBreakdownBetween(
     periodStart,
     periodEnd,
@@ -5599,10 +7103,7 @@ function AnalisisView({
     expenseHistory,
   );
   const fixedExpenses = expenseBreakdown.fixed;
-  const periodSaleItems = saleItems.filter((item) => {
-    const itemDate = new Date(item.createdAt);
-    return itemDate >= periodStart && itemDate <= periodEnd;
-  });
+  const periodSaleItems = saleItems.filter((item) => periodSaleIds.has(item.saleId));
   const filteredSales = periodSales.filter(
     (sale) =>
       saleMatchesShiftFilter(sale, shiftFilter) &&
@@ -5643,6 +7144,7 @@ function AnalisisView({
     filteredSales,
     paymentMethodCommissions,
     channelCommissions,
+    commissionHistory,
   );
   const netProfit =
     grossRevenue - soldProductCost - allocatedFixedExpenses - commissionCost;
@@ -5747,7 +7249,7 @@ function AnalisisView({
   )} - ${formatShortDate(periodEnd)} ${getArgentinaYear(periodEnd)}`;
   const periodName =
     analysisPeriodOptions.find((option) => option.id === periodFilter)?.label ??
-    "Periodo";
+    "Período";
 
   useEffect(() => {
     if (analysisSalesPage !== safeAnalysisSalesPage) {
@@ -5833,7 +7335,7 @@ function AnalisisView({
           </div>
           <div className="grid gap-2 xl:grid-cols-3 2xl:min-w-[760px]">
             <CompactFilterGroup
-              label="Periodo"
+              label="Período"
               onChange={setPeriodFilter}
               options={analysisPeriodOptions}
               value={periodFilter}
@@ -5855,7 +7357,7 @@ function AnalisisView({
           <div className="flex flex-col gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-4 py-3 text-sm text-cyan-50 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 font-semibold">
               <CalendarClock className="size-4" />
-              Datos usados en este analisis
+              Datos usados en este análisis
             </div>
             <p className="text-cyan-50/85">
               {periodName}: {periodRangeLabel}
@@ -5916,7 +7418,7 @@ function AnalisisView({
         <DarkPanel>
           <PanelHeader
             icon={BarChart3}
-            title="Ventas por metodo de pago"
+            title="Ventas por método de pago"
           />
           <div className="space-y-4 p-4">
             {methodTotals.map((item) => (
@@ -6040,7 +7542,7 @@ function AnalisisView({
               ))
             ) : (
               <p className="text-sm text-zinc-500">
-                Todavia no hay ventas para calcular margen.
+                Todavía no hay ventas para calcular margen.
               </p>
             )}
           </div>
@@ -6054,7 +7556,7 @@ function AnalisisView({
           icon={ReceiptText}
           title="Detalle de ventas"
         />
-        <div className="overflow-x-auto">
+        <div className="erp-mobile-table-scroll overflow-x-auto">
           <table className="w-full min-w-[760px] text-left text-sm">
             <thead className="border-b border-white/10 bg-white/[0.03] text-xs uppercase text-zinc-500">
               <tr>
@@ -6092,7 +7594,7 @@ function AnalisisView({
                           </p>
                           {hiddenCount > 0 && (
                             <p className="text-xs text-zinc-500">
-                              + {hiddenCount} producto{hiddenCount > 1 ? "s" : ""} mas
+                              + {hiddenCount} producto{hiddenCount > 1 ? "s" : ""} más
                             </p>
                           )}
                         </div>
@@ -6266,9 +7768,18 @@ function AnalisisView({
               {formatCurrency(commissionCost)}
             </p>
           </div>
-          <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-4">
-            <p className="text-sm text-emerald-100">Ganancia real</p>
-            <p className="mt-2 text-2xl font-semibold text-emerald-200">
+          <div
+            className={cn(
+              "rounded-lg border p-4",
+              netProfit >= 0
+                ? "border-emerald-300/20 bg-emerald-300/10"
+                : "border-rose-300/20 bg-rose-300/10",
+            )}
+          >
+            <p className={cn("text-sm", netProfit >= 0 ? "text-emerald-100" : "text-rose-100")}>
+              Ganancia real
+            </p>
+            <p className={cn("mt-2 text-2xl font-semibold", netProfit >= 0 ? "text-emerald-200" : "text-rose-200")}>
               {formatCurrency(netProfit)}
             </p>
           </div>
@@ -6324,6 +7835,25 @@ const endOfDay = (date: Date) => {
   });
 };
 
+const getOperationalDayRange = (date: Date) => {
+  const parts = getArgentinaDateParts(date);
+  const candidateStart = createArgentinaDate({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: SHIFT_DAY_START_HOUR,
+  });
+  const start =
+    date < candidateStart
+      ? addArgentinaDays(candidateStart, -1)
+      : candidateStart;
+
+  return {
+    start,
+    end: new Date(addArgentinaDays(start, 1).getTime() - 1),
+  };
+};
+
 const startOfWeek = (date: Date) => {
   const day = startOfDay(date);
   const weekday = day.getUTCDay();
@@ -6360,7 +7890,7 @@ const getAnalysisPeriodRange = (
   const today = createArgentinaDate(nowParts);
 
   if (period === "dia") {
-    return { start: startOfDay(today), end: endOfDay(today) };
+    return getOperationalDayRange(today);
   }
 
   if (period === "semana") {
@@ -6487,18 +8017,13 @@ const getSalesBetween = (sales: Sale[], start: Date, end: Date) =>
     return saleDate >= start && saleDate <= end;
   });
 
-const getSaleItemsBetween = (saleItems: SaleItem[], start: Date, end: Date) =>
-  saleItems.filter((item) => {
-    const itemDate = new Date(item.createdAt);
-    return itemDate >= start && itemDate <= end;
-  });
-
 const summarizeSales = (
   sales: Sale[],
   saleItems: SaleItem[],
   expenseBreakdown: { total: number },
   paymentMethodCommissions: Record<string, number>,
   channelCommissions: Record<SaleChannel, number>,
+  commissionHistory: CommissionHistory[] = [],
   shiftFilter: ShiftFilter = "todo",
   channelFilter: ChannelFilter = "todo",
 ): HistoryRow => {
@@ -6527,6 +8052,7 @@ const summarizeSales = (
     filteredSales,
     paymentMethodCommissions,
     channelCommissions,
+    commissionHistory,
   );
 
   return {
@@ -6539,6 +8065,7 @@ const summarizeSales = (
 
 function HistorialView({
   channelCommissions,
+  commissionHistory,
   expenses,
   expenseHistory,
   paymentMethodCommissions,
@@ -6546,6 +8073,7 @@ function HistorialView({
   sales,
 }: {
   channelCommissions: Record<SaleChannel, number>;
+  commissionHistory: CommissionHistory[];
   expenses: Expense[];
   expenseHistory: ExpenseHistory[];
   paymentMethodCommissions: Record<string, number>;
@@ -6566,10 +8094,11 @@ function HistorialView({
     const start = startOfDay(addArgentinaDays(end, -6));
     const summary = summarizeSales(
       getSalesBetween(sales, start, end),
-      getSaleItemsBetween(saleItems, start, end),
+      saleItems,
       calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
       paymentMethodCommissions,
       channelCommissions,
+      commissionHistory,
       shiftFilter,
       channelFilter,
     );
@@ -6583,12 +8112,19 @@ function HistorialView({
 
   const dailyRows = Array.from({ length: 7 }, (_, index) => {
     const day = startOfDay(addArgentinaDays(currentDate, -(6 - index)));
+    const dayRange = getOperationalDayRange(
+      createArgentinaDate({
+        ...getArgentinaDateParts(day),
+        hour: SHIFT_DAY_START_HOUR,
+      }),
+    );
     const summary = summarizeSales(
-      getSalesBetween(sales, day, endOfDay(day)),
-      getSaleItemsBetween(saleItems, day, endOfDay(day)),
-      calculateExpenseBreakdownBetween(day, endOfDay(day), expenses, expenseHistory),
+      getSalesBetween(sales, dayRange.start, dayRange.end),
+      saleItems,
+      calculateExpenseBreakdownBetween(dayRange.start, dayRange.end, expenses, expenseHistory),
       paymentMethodCommissions,
       channelCommissions,
+      commissionHistory,
       shiftFilter,
       channelFilter,
     );
@@ -6615,10 +8151,11 @@ function HistorialView({
     );
     const summary = summarizeSales(
       getSalesBetween(sales, start, end),
-      getSaleItemsBetween(saleItems, start, end),
+      saleItems,
       calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
       paymentMethodCommissions,
       channelCommissions,
+      commissionHistory,
       shiftFilter,
       channelFilter,
     );
@@ -6653,10 +8190,11 @@ function HistorialView({
     );
     const summary = summarizeSales(
       getSalesBetween(sales, start, end),
-      getSaleItemsBetween(saleItems, start, end),
+      saleItems,
       calculateExpenseBreakdownBetween(start, end, expenses, expenseHistory),
       paymentMethodCommissions,
       channelCommissions,
+      commissionHistory,
       shiftFilter,
       channelFilter,
     );
@@ -6669,7 +8207,7 @@ function HistorialView({
   const totalRange = getDataDateRange(sales, expenseHistory);
   const totalSummary = summarizeSales(
     getSalesBetween(sales, totalRange.start, totalRange.end),
-    getSaleItemsBetween(saleItems, totalRange.start, totalRange.end),
+    saleItems,
     calculateExpenseBreakdownBetween(
       totalRange.start,
       totalRange.end,
@@ -6678,6 +8216,7 @@ function HistorialView({
     ),
     paymentMethodCommissions,
     channelCommissions,
+    commissionHistory,
     shiftFilter,
     channelFilter,
   );
@@ -6773,7 +8312,7 @@ function HistorialView({
           <HistoryTable
             icon={BadgeDollarSign}
             rows={totalRows}
-            title="Total historico"
+            title="Total histórico"
             totalLabel="Total"
           />
         )}
@@ -6805,11 +8344,11 @@ function HistoryTable({
   return (
     <DarkPanel>
       <PanelHeader icon={icon} title={title} />
-      <div className="overflow-x-auto p-4">
+      <div className="erp-mobile-table-scroll overflow-x-auto p-4">
         <table className="w-full min-w-[680px] text-left text-sm">
           <thead className="text-xs uppercase text-zinc-500">
             <tr>
-              <th className="pb-2 font-semibold">Periodo</th>
+              <th className="pb-2 font-semibold">Período</th>
               <th className="pb-2 text-right font-semibold">Total ganó</th>
               <th className="pb-2 text-right font-semibold">Neto gastos</th>
               <th className="pb-2 text-right font-semibold">Productos</th>
@@ -6866,8 +8405,14 @@ function HistoryTable({
 
 function FinanzasView({
   channelCommissions,
+  commissionHistory,
   commissionCost,
+  deleteCommissionHistory,
+  deleteExpenseHistory,
+  editCommissionHistory,
+  editExpenseHistory,
   expenses,
+  expenseHistory,
   fixedExpenses,
   grossRevenue,
   netProfit,
@@ -6880,8 +8425,14 @@ function FinanzasView({
   updateExpense,
 }: {
   channelCommissions: Record<SaleChannel, number>;
+  commissionHistory: CommissionHistory[];
   commissionCost: number;
+  deleteCommissionHistory: (snapshot: CommissionHistory) => void;
+  deleteExpenseHistory: (snapshot: ExpenseHistory) => void;
+  editCommissionHistory: (snapshot: CommissionHistory) => Promise<boolean>;
+  editExpenseHistory: (snapshot: ExpenseHistory) => Promise<boolean>;
   expenses: Expense[];
+  expenseHistory: ExpenseHistory[];
   fixedExpenses: number;
   grossRevenue: number;
   netProfit: number;
@@ -6899,6 +8450,8 @@ function FinanzasView({
   const fixedExpenseItems = expenses.filter((expense) => !isProductionExpense(expense));
   const [methodDraft, setMethodDraft] = useState(paymentMethodCommissions);
   const [channelDraft, setChannelDraft] = useState(channelCommissions);
+  const [isExpensesPopupOpen, setIsExpensesPopupOpen] = useState(false);
+  const [isCommissionsPopupOpen, setIsCommissionsPopupOpen] = useState(false);
   const [isSavingCommissions, setIsSavingCommissions] = useState(false);
 
   useEffect(() => {
@@ -6918,167 +8471,736 @@ function FinanzasView({
     setIsSavingCommissions(true);
     await saveCommissions(methodDraft, channelDraft);
     setIsSavingCommissions(false);
+    setIsCommissionsPopupOpen(false);
   };
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
       <DarkPanel>
         <PanelHeader
           icon={WalletCards}
           title="Ganancia del local"
         />
-        <div className="space-y-4 p-4">
-          <FinanceLine
+        <div className="grid gap-4 p-4 lg:grid-cols-[1fr_1fr_1fr_1fr_1.2fr]">
+          <FinanceMetricBox
             icon={ArrowUpCircle}
             label="Total vendido"
             tone="cyan"
             value={grossRevenue}
           />
-          <FinanceLine
+          <FinanceMetricBox
             icon={ArrowDownCircle}
-            label="Costo de productos vendidos"
+            label="Costo vendido"
             tone="amber"
             value={soldProductCost}
           />
-          <FinanceLine
+          <FinanceMetricBox
             icon={WalletCards}
             label="Gastos fijos"
             tone="amber"
             value={fixedExpenses}
           />
-          <FinanceLine
+          <FinanceMetricBox
             icon={CreditCard}
             label="Comisiones"
             tone="amber"
             value={commissionCost}
           />
-          <FinanceLine
-            icon={DollarSign}
-            label="Total descontado"
-            tone="amber"
-            value={soldProductCost + totalExpenses + commissionCost}
-          />
-          <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/10 p-5">
-            <p className="text-sm text-emerald-100">Ganancia real final</p>
-            <p className="mt-2 text-4xl font-semibold text-emerald-200">
-              {formatCurrency(netProfit)}
+          <div
+            className={cn(
+              "flex min-h-[116px] flex-col justify-between rounded-lg border p-4",
+              netProfit >= 0
+                ? "border-emerald-300/20 bg-emerald-300/10"
+                : "border-rose-300/20 bg-rose-300/10",
+            )}
+          >
+            <div>
+              <p className={cn("text-xs font-semibold uppercase", netProfit >= 0 ? "text-emerald-100" : "text-rose-100")}>
+                Ganancia real
+              </p>
+              <p className={cn("mt-3 break-words text-3xl font-semibold leading-none", netProfit >= 0 ? "text-emerald-200" : "text-rose-200")}>
+                {formatCurrency(netProfit)}
+              </p>
+            </div>
+            <p className="mt-3 text-xs text-zinc-400">
+              Descontado: {formatCurrency(soldProductCost + totalExpenses + commissionCost)}
             </p>
           </div>
         </div>
       </DarkPanel>
 
-      <DarkPanel>
-        <PanelHeader
-          icon={CreditCard}
-          title="Comisiones"
-        />
-        <div className="space-y-5 p-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            {saleChannelOptions.map((channel) => (
-              <label
-                className="rounded-lg border border-white/10 bg-black/20 p-4"
-                key={channel.id}
+      <div className="grid gap-5 xl:grid-cols-2">
+        <DarkPanel>
+          <PanelHeader
+            right={
+              <Button
+                className="h-10 bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                onClick={() => setIsExpensesPopupOpen(true)}
+                type="button"
               >
-                <span className="text-sm font-semibold text-zinc-200">
-                  {channel.label}
-                </span>
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    className="h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
-                    min={0}
-                    onChange={(event) =>
-                      updateChannelDraft(channel.id, Number(event.target.value || 0))
-                    }
-                    type="number"
-                    value={channelDraft[channel.id] ?? 0}
-                  />
-                  <span className="text-sm font-semibold text-zinc-500">%</span>
-                </div>
-              </label>
-            ))}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {paymentMethods.map((method) => (
-              <label
-                className="rounded-lg border border-white/10 bg-black/20 p-4"
-                key={method}
-              >
-                <span className="text-sm font-semibold text-zinc-200">{method}</span>
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    className="h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
-                    min={0}
-                    onChange={(event) =>
-                      updateMethodDraft(method, Number(event.target.value || 0))
-                    }
-                    type="number"
-                    value={methodDraft[method] ?? 0}
-                  />
-                  <span className="text-sm font-semibold text-zinc-500">%</span>
-                </div>
-              </label>
-            ))}
-          </div>
-        </div>
-        <div className="border-t border-white/10 p-4">
-          <Button
-            className="h-11 bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-            disabled={isSavingCommissions}
-            onClick={handleSaveCommissions}
-            type="button"
-          >
-            {isSavingCommissions ? "Guardando..." : "Guardar comisiones"}
-          </Button>
-        </div>
-      </DarkPanel>
-
-      <DarkPanel>
-        <PanelHeader
-          icon={Lightbulb}
-          title="Gastos que se descuentan"
-        />
-        <div className="space-y-5 p-4">
-          <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
+                Editar gastos
+              </Button>
+            }
+            icon={Lightbulb}
+            title="Gastos fijos"
+          />
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="font-semibold text-zinc-100">Gastos fijos del local</p>
+              <p className="text-2xl font-semibold text-zinc-100">
+                {formatCurrency(fixedExpenses)}
+              </p>
+              <p className="mt-1 text-sm text-zinc-500">
+                {fixedExpenseItems.length} conceptos cargados
+              </p>
             </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              {fixedExpenseItems.map((expense) => (
-                <label
-                  className="rounded-lg border border-white/10 bg-[#080a0c] p-4"
-                  key={expense.key}
-                >
-                  <span className="text-sm font-semibold text-zinc-200">{expense.label}</span>
-                  <input
-                    className="mt-3 h-11 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
-                    min={0}
-                    onChange={(event) =>
-                      updateExpense(expense.key, Number(event.target.value || 0))
-                    }
-                    type="number"
-                    value={expense.amount}
-                  />
-                </label>
-              ))}
-            </div>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={() => setIsExpensesPopupOpen(true)}
+              type="button"
+              variant="outline"
+            >
+              Ver detalle
+            </Button>
           </div>
+        </DarkPanel>
+
+        <DarkPanel>
+          <PanelHeader
+            right={
+              <Button
+                className="h-10 bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                onClick={() => setIsCommissionsPopupOpen(true)}
+                type="button"
+              >
+                Editar comisiones
+              </Button>
+            }
+            icon={CreditCard}
+            title="Comisiones"
+          />
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-2xl font-semibold text-zinc-100">
+                {formatCurrency(commissionCost)}
+              </p>
+              <p className="mt-1 text-sm text-zinc-500">
+                Canales y medios de pago
+              </p>
+            </div>
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={() => setIsCommissionsPopupOpen(true)}
+              type="button"
+              variant="outline"
+            >
+              Ver detalle
+            </Button>
+          </div>
+        </DarkPanel>
+      </div>
+
+      {isExpensesPopupOpen && (
+        <StockFormModal
+          icon={Lightbulb}
+          onClose={() => setIsExpensesPopupOpen(false)}
+          title="Gastos fijos"
+        >
+          <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2">
+            {fixedExpenseItems.map((expense) => (
+              <ExpenseAmountField
+                key={expense.key}
+                label={expense.label}
+                onChange={(value) => updateExpense(expense.key, value)}
+                value={expense.amount}
+              />
+            ))}
+          </div>
+          <div className="flex flex-col-reverse gap-2 p-4 sm:flex-row sm:justify-end">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={() => setIsExpensesPopupOpen(false)}
+              type="button"
+              variant="outline"
+            >
+              Cerrar
+            </Button>
+            <Button
+              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              onClick={() => {
+                saveExpenses();
+                setIsExpensesPopupOpen(false);
+              }}
+              type="button"
+            >
+              Guardar gastos
+            </Button>
+          </div>
+        </StockFormModal>
+      )}
+
+      {isCommissionsPopupOpen && (
+        <StockFormModal
+          icon={CreditCard}
+          onClose={() => setIsCommissionsPopupOpen(false)}
+          title="Comisiones"
+        >
+          <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2">
+            {saleChannelOptions.map((channel) => (
+              <CommissionField
+                key={channel.id}
+                label={channel.label}
+                onChange={(value) => updateChannelDraft(channel.id, value)}
+                value={channelDraft[channel.id] ?? 0}
+              />
+            ))}
+            {paymentMethods.map((method) => (
+              <CommissionField
+                key={method}
+                label={method}
+                onChange={(value) => updateMethodDraft(method, value)}
+                value={methodDraft[method] ?? 0}
+              />
+            ))}
+          </div>
+          <div className="flex flex-col-reverse gap-2 p-4 sm:flex-row sm:justify-end">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              disabled={isSavingCommissions}
+              onClick={() => setIsCommissionsPopupOpen(false)}
+              type="button"
+              variant="outline"
+            >
+              Cerrar
+            </Button>
+            <Button
+              className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+              disabled={isSavingCommissions}
+              onClick={handleSaveCommissions}
+              type="button"
+            >
+              {isSavingCommissions ? "Guardando..." : "Guardar comisiones"}
+            </Button>
+          </div>
+        </StockFormModal>
+      )}
+
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 px-1">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-white/5 text-[var(--erp-primary)]">
+            <ReceiptText className="size-4" />
+          </div>
+          <h2 className="font-semibold text-[var(--erp-text)]">
+            Correcciones guardadas
+          </h2>
         </div>
-        <div className="border-t border-white/10 p-4">
-          <Button
-            className="h-11 bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
-            onClick={saveExpenses}
-            type="button"
-          >
-            Guardar gastos
-          </Button>
+        <div className="grid gap-5 xl:grid-cols-2">
+          <ExpenseHistoryPanel
+            history={expenseHistory}
+            onDelete={deleteExpenseHistory}
+            onSave={editExpenseHistory}
+          />
+
+          <CommissionHistoryPanel
+            history={commissionHistory}
+            onDelete={deleteCommissionHistory}
+            onSave={editCommissionHistory}
+          />
         </div>
-      </DarkPanel>
       </div>
     </div>
   );
 }
+
+function FinanceMetricBox({
+  icon: Icon,
+  label,
+  tone,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  tone: "amber" | "cyan";
+  value: number;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex min-h-[116px] min-w-0 flex-col justify-between rounded-lg border p-4",
+        tone === "cyan"
+          ? "border-cyan-300/20 bg-cyan-300/10"
+          : "border-amber-300/20 bg-amber-300/10",
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold uppercase text-zinc-400">{label}</p>
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-black/20">
+          <Icon className={cn("size-4", tone === "cyan" ? "text-cyan-200" : "text-amber-200")} />
+        </div>
+      </div>
+      <p className="break-words text-2xl font-semibold leading-tight text-zinc-100">
+        {formatCurrency(value)}
+      </p>
+    </div>
+  );
+}
+
+function CommissionField({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="min-w-0 text-xs font-semibold text-zinc-500">
+      {label}
+      <div className="mt-1 grid h-10 grid-cols-[minmax(0,1fr)_32px] overflow-hidden rounded-lg border border-white/10 bg-[#080a0c] focus-within:border-cyan-300/60">
+        <input
+          className="h-10 min-w-0 border-0 bg-transparent px-3 text-sm font-semibold text-zinc-100 outline-none"
+          min={0}
+          onChange={(event) => onChange(Number(event.target.value || 0))}
+          type="number"
+          value={value}
+        />
+        <span className="flex items-center justify-center border-l border-white/10 text-sm font-semibold text-zinc-500">
+          %
+        </span>
+      </div>
+    </label>
+  );
+}
+
+function ExpenseAmountField({
+  label,
+  onChange,
+  value,
+}: {
+  label: string;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <label className="min-w-0 text-xs font-semibold text-zinc-500">
+      {label}
+      <div className="mt-1 grid h-10 grid-cols-[32px_minmax(0,1fr)] overflow-hidden rounded-lg border border-white/10 bg-[#080a0c] focus-within:border-cyan-300/60">
+        <span className="flex items-center justify-center border-r border-white/10 text-sm font-semibold text-zinc-500">
+          $
+        </span>
+        <input
+          className="h-10 min-w-0 border-0 bg-transparent px-3 text-sm font-semibold text-zinc-100 outline-none"
+          min={0}
+          onChange={(event) => onChange(Number(event.target.value || 0))}
+          type="number"
+          value={value}
+        />
+      </div>
+    </label>
+  );
+}
+
+function ExpenseHistoryPanel({
+  history,
+  onDelete,
+  onSave,
+}: {
+  history: ExpenseHistory[];
+  onDelete: (snapshot: ExpenseHistory) => void;
+  onSave: (snapshot: ExpenseHistory) => Promise<boolean>;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftExpenses, setDraftExpenses] = useState<Expense[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const sortedHistory = [...history]
+    .sort((left, right) => new Date(right.startsAt).getTime() - new Date(left.startsAt).getTime());
+  const visibleHistory = sortedHistory.slice(historyIndex, historyIndex + 1);
+
+  useEffect(() => {
+    setHistoryIndex((current) => Math.min(current, Math.max(0, sortedHistory.length - 1)));
+  }, [sortedHistory.length]);
+
+  const startEditing = (snapshot: ExpenseHistory) => {
+    setEditingId(snapshot.id);
+    setDraftExpenses(snapshot.expenses);
+  };
+
+  const updateDraftExpense = (key: string, amount: number) => {
+    setDraftExpenses((current) =>
+      current.map((expense) =>
+        expense.key === key ? { ...expense, amount: Math.max(0, amount) } : expense,
+      ),
+    );
+  };
+
+  const saveDraft = async (snapshot: ExpenseHistory) => {
+    setIsSaving(true);
+    const saved = await onSave({
+      ...snapshot,
+      expenses: draftExpenses,
+      total: draftExpenses.reduce((total, expense) => total + expense.amount, 0),
+    });
+    setIsSaving(false);
+    if (saved) {
+      setEditingId(null);
+    }
+  };
+
+  return (
+    <DarkPanel>
+      <PanelHeader
+        right={
+          sortedHistory.length > 1 && (
+            <div className="flex flex-wrap gap-2">
+              {historyIndex > 0 && (
+                <Button
+                  className="h-9 border border-white/10 bg-white/[0.03] text-zinc-100 hover:bg-white/10"
+                  onClick={() => {
+                    setEditingId(null);
+                    setHistoryIndex(0);
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Último guardado
+                </Button>
+              )}
+              {historyIndex < sortedHistory.length - 1 && (
+                <Button
+                  className="h-9 border border-white/10 bg-white/[0.03] text-zinc-100 hover:bg-white/10"
+                  onClick={() => {
+                    setEditingId(null);
+                    setHistoryIndex((current) => current + 1);
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Ver anterior
+                </Button>
+              )}
+            </div>
+          )
+        }
+        icon={ReceiptText}
+        title="Historial de gastos"
+      />
+      <div className="space-y-3 p-4">
+        {visibleHistory.length ? (
+          visibleHistory.map((snapshot) => {
+            const isEditing = editingId === snapshot.id;
+            const sourceExpenses = isEditing ? draftExpenses : snapshot.expenses;
+            const total = sourceExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+
+            return (
+              <div
+                className="rounded-lg border border-white/10 bg-black/20 p-4"
+                key={snapshot.id}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-zinc-100">
+                      {formatFullDateTime(snapshot.startsAt)}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-400">
+                      Total guardado: {formatCurrency(total)}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      className="h-9 border border-white/10 bg-white/[0.03] text-zinc-100 hover:bg-white/10"
+                      onClick={() => (isEditing ? setEditingId(null) : startEditing(snapshot))}
+                      type="button"
+                      variant="ghost"
+                    >
+                      {isEditing ? "Cancelar" : "Editar"}
+                    </Button>
+                    <Button
+                      className="h-9 border-rose-400/40 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                      onClick={() => onDelete(snapshot)}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Trash2 className="mr-2 size-4" />
+                      Eliminar
+                    </Button>
+                  </div>
+                </div>
+
+                {isEditing ? (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {draftExpenses.map((expense) => (
+                      <label
+                        className="rounded-lg border border-white/10 bg-[#080a0c] p-3"
+                        key={expense.key}
+                      >
+                        <span className="text-xs font-semibold text-zinc-400">
+                          {expense.label}
+                        </span>
+                        <input
+                          className="mt-2 h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
+                          min={0}
+                          onChange={(event) =>
+                            updateDraftExpense(expense.key, Number(event.target.value || 0))
+                          }
+                          type="number"
+                          value={expense.amount}
+                        />
+                      </label>
+                    ))}
+                    <Button
+                      className="h-10 bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200 sm:col-span-2"
+                      disabled={isSaving}
+                      onClick={() => saveDraft(snapshot)}
+                      type="button"
+                    >
+                      {isSaving ? "Guardando..." : "Guardar corrección"}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                    {sourceExpenses.map((expense) => (
+                      <div
+                        className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2"
+                        key={expense.key}
+                      >
+                        <span className="text-zinc-400">{expense.label}</span>
+                        <span className="font-semibold text-zinc-100">
+                          {formatCurrency(expense.amount)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        ) : (
+          <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-5 text-center text-sm text-zinc-500">
+            Todavía no hay historial de gastos.
+          </div>
+        )}
+      </div>
+    </DarkPanel>
+  );
+}
+
+function CommissionHistoryPanel({
+  history,
+  onDelete,
+  onSave,
+}: {
+  history: CommissionHistory[];
+  onDelete: (snapshot: CommissionHistory) => void;
+  onSave: (snapshot: CommissionHistory) => Promise<boolean>;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [channelDraft, setChannelDraft] = useState<Record<SaleChannel, number>>({
+    local: 0,
+    pedidos_ya: 0,
+  });
+  const [methodDraft, setMethodDraft] = useState<CommissionMethod[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const sortedHistory = [...history]
+    .sort((left, right) => new Date(right.startsAt).getTime() - new Date(left.startsAt).getTime());
+  const visibleHistory = sortedHistory.slice(historyIndex, historyIndex + 1);
+
+  useEffect(() => {
+    setHistoryIndex((current) => Math.min(current, Math.max(0, sortedHistory.length - 1)));
+  }, [sortedHistory.length]);
+
+  const startEditing = (snapshot: CommissionHistory) => {
+    setEditingId(snapshot.id);
+    setChannelDraft(snapshot.channels);
+    setMethodDraft(snapshot.methods);
+  };
+
+  const updateMethodDraft = (name: string, rate: number) => {
+    setMethodDraft((current) =>
+      current.map((method) =>
+        method.name === name ? { ...method, rate: Math.max(0, rate) } : method,
+      ),
+    );
+  };
+
+  const saveDraft = async (snapshot: CommissionHistory) => {
+    setIsSaving(true);
+    const saved = await onSave({
+      ...snapshot,
+      channels: channelDraft,
+      methods: methodDraft,
+    });
+    setIsSaving(false);
+    if (saved) {
+      setEditingId(null);
+    }
+  };
+
+  return (
+    <DarkPanel>
+      <PanelHeader
+        right={
+          sortedHistory.length > 1 && (
+            <div className="flex flex-wrap gap-2">
+              {historyIndex > 0 && (
+                <Button
+                  className="h-9 border border-white/10 bg-white/[0.03] text-zinc-100 hover:bg-white/10"
+                  onClick={() => {
+                    setEditingId(null);
+                    setHistoryIndex(0);
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Último guardado
+                </Button>
+              )}
+              {historyIndex < sortedHistory.length - 1 && (
+                <Button
+                  className="h-9 border border-white/10 bg-white/[0.03] text-zinc-100 hover:bg-white/10"
+                  onClick={() => {
+                    setEditingId(null);
+                    setHistoryIndex((current) => current + 1);
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Ver anterior
+                </Button>
+              )}
+            </div>
+          )
+        }
+        icon={CreditCard}
+        title="Historial de comisiones"
+      />
+      <div className="space-y-3 p-4">
+        {visibleHistory.length ? (
+          visibleHistory.map((snapshot) => {
+            const isEditing = editingId === snapshot.id;
+            const channels = isEditing ? channelDraft : snapshot.channels;
+            const methods = isEditing ? methodDraft : snapshot.methods;
+
+            return (
+              <div
+                className="rounded-lg border border-white/10 bg-black/20 p-4"
+                key={snapshot.id}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="font-semibold text-zinc-100">
+                      {formatFullDateTime(snapshot.startsAt)}
+                    </p>
+                    <p className="mt-1 text-sm text-zinc-400">
+                      Canales y métodos guardados en ese momento.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      className="h-9 border border-white/10 bg-white/[0.03] text-zinc-100 hover:bg-white/10"
+                      onClick={() => (isEditing ? setEditingId(null) : startEditing(snapshot))}
+                      type="button"
+                      variant="ghost"
+                    >
+                      {isEditing ? "Cancelar" : "Editar"}
+                    </Button>
+                    <Button
+                      className="h-9 border-rose-400/40 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20"
+                      onClick={() => onDelete(snapshot)}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Trash2 className="mr-2 size-4" />
+                      Eliminar
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {saleChannelOptions.map((channel) => (
+                    <label
+                      className="rounded-lg border border-white/10 bg-[#080a0c] p-3"
+                      key={channel.id}
+                    >
+                      <span className="text-xs font-semibold text-zinc-400">
+                        {channel.label}
+                      </span>
+                      {isEditing ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
+                            min={0}
+                            onChange={(event) =>
+                              setChannelDraft((current) => ({
+                                ...current,
+                                [channel.id]: Math.max(0, Number(event.target.value || 0)),
+                              }))
+                            }
+                            type="number"
+                            value={channels[channel.id] ?? 0}
+                          />
+                          <span className="text-sm font-semibold text-zinc-500">%</span>
+                        </div>
+                      ) : (
+                        <p className="mt-2 font-semibold text-zinc-100">
+                          {channels[channel.id] ?? 0}%
+                        </p>
+                      )}
+                    </label>
+                  ))}
+
+                  {methods.map((method) => (
+                    <label
+                      className="rounded-lg border border-white/10 bg-[#080a0c] p-3"
+                      key={method.name}
+                    >
+                      <span className="text-xs font-semibold text-zinc-400">
+                        {method.name}
+                      </span>
+                      {isEditing ? (
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            className="h-10 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none focus:border-cyan-300/60"
+                            min={0}
+                            onChange={(event) =>
+                              updateMethodDraft(method.name, Number(event.target.value || 0))
+                            }
+                            type="number"
+                            value={method.rate}
+                          />
+                          <span className="text-sm font-semibold text-zinc-500">%</span>
+                        </div>
+                      ) : (
+                        <p className="mt-2 font-semibold text-zinc-100">{method.rate}%</p>
+                      )}
+                    </label>
+                  ))}
+
+                  {isEditing && (
+                    <Button
+                      className="h-10 bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200 sm:col-span-2"
+                      disabled={isSaving}
+                      onClick={() => saveDraft(snapshot)}
+                      type="button"
+                    >
+                      {isSaving ? "Guardando..." : "Guardar corrección"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="rounded-lg border border-dashed border-white/10 bg-black/20 p-5 text-center text-sm text-zinc-500">
+            Todavía no hay historial de comisiones.
+          </div>
+        )}
+      </div>
+    </DarkPanel>
+  );
+}
+
 function EmpleadosView({
   attendance,
   attendanceStatusMap,
@@ -7319,7 +9441,7 @@ function EmpleadosView({
               <div className="mt-3 space-y-2 text-sm text-amber-50/90">
                 {almostEndingShift.map((status) => (
                   <p key={`soon-${status.key}`}>
-                    {status.employeeName} esta por cumplir 8 horas. Lleva{" "}
+                    {status.employeeName} está por cumplir 8 horas. Lleva{" "}
                     {formatWorkedDuration(status.workedMinutes)}.
                   </p>
                 ))}
@@ -7683,7 +9805,9 @@ function HistorialEmpleadosView({
   const [editingAttendanceId, setEditingAttendanceId] = useState<string | null>(null);
   const [employeesPage, setEmployeesPage] = useState(1);
   const [attendancePage, setAttendancePage] = useState(1);
+  const isEmployeeFormOpen = isCreatingEmployee || Boolean(editingId);
   const isAttendanceFormOpen = isCreatingAttendance || Boolean(editingAttendanceId);
+  const employeeDraft = editingId ? editingEmployee : newEmployee;
   const sortedAttendance = [...attendance].sort(
     (left, right) =>
       new Date(right.recordedAt).getTime() - new Date(left.recordedAt).getTime(),
@@ -7707,6 +9831,38 @@ function HistorialEmpleadosView({
     }));
   };
 
+  const updateEmployeeDraft = (changes: Partial<StaffForm>) => {
+    if (editingId) {
+      setEditingEmployee((current) => ({ ...current, ...changes }));
+      return;
+    }
+
+    setNewEmployee((current) => ({ ...current, ...changes }));
+  };
+
+  const closeEmployeeForm = () => {
+    setNewEmployee(emptyEmployee);
+    setEditingId(null);
+    setEditingEmployee(emptyEmployee);
+    setIsCreatingEmployee(false);
+  };
+
+  const saveEmployeeForm = async () => {
+    const saved = await saveEmployee(employeeDraft);
+    if (saved) closeEmployeeForm();
+  };
+
+  const closeAttendanceForm = () => {
+    setIsCreatingAttendance(false);
+    setEditingAttendanceId(null);
+    setAttendanceForm(emptyAttendance());
+  };
+
+  const saveAttendanceForm = async () => {
+    const saved = await saveAttendanceRecord(attendanceForm);
+    if (saved) closeAttendanceForm();
+  };
+
   return (
     <div className="space-y-5">
       <div className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
@@ -7717,12 +9873,13 @@ function HistorialEmpleadosView({
             right={
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                disabled={isEmployeeFormOpen}
                 onClick={() => {
                   setNewEmployee(emptyEmployee);
                   setEditingId(null);
+                  setEditingEmployee(emptyEmployee);
                   setIsCreatingEmployee(true);
                 }}
-                disabled={isCreatingEmployee}
                 size="sm"
                 type="button"
               >
@@ -7732,191 +9889,32 @@ function HistorialEmpleadosView({
             }
           />
 
-          {isCreatingEmployee && (
-            <div className="border-b border-white/10 p-4">
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-                <InlineInput
-                  label="Nombre"
-                  onChange={(value) => setNewEmployee((current) => ({ ...current, name: value }))}
-                  value={newEmployee.name}
-                />
-                <InlineInput
-                  label="Rol"
-                  onChange={(value) => setNewEmployee((current) => ({ ...current, role: value }))}
-                  value={newEmployee.role}
-                />
-                <InlineInput
-                  label="Turno"
-                  onChange={(value) => setNewEmployee((current) => ({ ...current, shift: value }))}
-                  value={newEmployee.shift}
-                />
-                <InlineInput
-                  label="Sector"
-                  onChange={(value) => setNewEmployee((current) => ({ ...current, area: value }))}
-                  value={newEmployee.area}
-                />
-                <InlineInput
-                  label="PIN"
-                  onChange={(value) => setNewEmployee((current) => ({ ...current, pin: value }))}
-                  value={newEmployee.pin ?? ""}
-                />
-                <label className="text-xs font-semibold text-zinc-500">
-                  Estado
-                  <select
-                    className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none"
-                    onChange={(event) =>
-                      setNewEmployee((current) => ({
-                        ...current,
-                        status: event.target.value as StaffMember["status"],
-                      }))
-                    }
-                    value={newEmployee.status}
-                  >
-                    {statusOptions.map((status) => (
-                      <option key={status}>{status}</option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                  onClick={async () => {
-                    const saved = await saveEmployee(newEmployee);
-                    if (saved) {
-                      setNewEmployee(emptyEmployee);
-                      setIsCreatingEmployee(false);
-                    }
-                  }}
-                  type="button"
-                >
-                  Guardar empleado
-                </Button>
-                <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                  onClick={() => {
-                    setNewEmployee(emptyEmployee);
-                    setIsCreatingEmployee(false);
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  Cancelar
-                </Button>
-              </div>
-            </div>
-          )}
-
           <div className="grid gap-3 p-4">
             {paginatedStaff.map((person) => (
               <div
                 className="rounded-lg border border-white/10 bg-black/20 p-4"
                 key={person.id ?? person.name}
               >
-                {editingId === (person.id ?? person.name) ? (
-                  <div className="space-y-4">
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-                      <InlineInput
-                        label="Nombre"
-                        onChange={(value) =>
-                          setEditingEmployee((current) => ({ ...current, name: value }))
-                        }
-                        value={editingEmployee.name}
-                      />
-                      <InlineInput
-                        label="Rol"
-                        onChange={(value) =>
-                          setEditingEmployee((current) => ({ ...current, role: value }))
-                        }
-                        value={editingEmployee.role}
-                      />
-                      <InlineInput
-                        label="Turno"
-                        onChange={(value) =>
-                          setEditingEmployee((current) => ({ ...current, shift: value }))
-                        }
-                        value={editingEmployee.shift}
-                      />
-                      <InlineInput
-                        label="Sector"
-                        onChange={(value) =>
-                          setEditingEmployee((current) => ({ ...current, area: value }))
-                        }
-                        value={editingEmployee.area}
-                      />
-                      <InlineInput
-                        label="PIN"
-                        onChange={(value) =>
-                          setEditingEmployee((current) => ({ ...current, pin: value }))
-                        }
-                        value={editingEmployee.pin ?? ""}
-                      />
-                      <label className="text-xs font-semibold text-zinc-500">
-                        Estado
-                        <select
-                          className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none"
-                          onChange={(event) =>
-                            setEditingEmployee((current) => ({
-                              ...current,
-                              status: event.target.value as StaffMember["status"],
-                            }))
-                          }
-                          value={editingEmployee.status}
-                        >
-                          {statusOptions.map((status) => (
-                            <option key={status}>{status}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                        onClick={async () => {
-                          const saved = await saveEmployee(editingEmployee);
-                          if (saved) {
-                            setEditingId(null);
-                            setEditingEmployee(emptyEmployee);
-                          }
-                        }}
-                        type="button"
-                      >
-                        Guardar
-                      </Button>
-                      <Button
-                        className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                        onClick={() => {
-                          setEditingId(null);
-                          setEditingEmployee(emptyEmployee);
-                        }}
-                        type="button"
-                        variant="outline"
-                      >
-                        Cancelar
-                      </Button>
-                    </div>
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-zinc-100">{person.name}</p>
+                    <p className="mt-1 truncate text-sm text-zinc-400">
+                      {person.role} • {person.area || "Sin sector"} • {person.shift || "Sin turno"}
+                    </p>
                   </div>
-                ) : (
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="font-semibold text-zinc-100">{person.name}</p>
-                      <p className="mt-1 text-sm text-zinc-400">
-                        {person.role} • {person.area || "Sin sector"} • {person.shift || "Sin turno"}
-                      </p>
-                    </div>
-                    <Button
-                      className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
-                      onClick={() => {
-                        setEditingId(person.id ?? person.name);
-                        setEditingEmployee(person);
-                      }}
-                      type="button"
-                      variant="outline"
-                    >
-                      Editar
-                    </Button>
-                  </div>
-                )}
+                  <Button
+                    className="shrink-0 border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+                    onClick={() => {
+                      setIsCreatingEmployee(false);
+                      setEditingId(person.id ?? person.name);
+                      setEditingEmployee(person);
+                    }}
+                    type="button"
+                    variant="outline"
+                  >
+                    Editar
+                  </Button>
+                </div>
               </div>
             ))}
             <PaginationControls
@@ -7935,12 +9933,12 @@ function HistorialEmpleadosView({
             right={
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                disabled={isAttendanceFormOpen}
                 onClick={() => {
                   setAttendanceForm(emptyAttendance());
                   setEditingAttendanceId(null);
                   setIsCreatingAttendance(true);
                 }}
-                disabled={isAttendanceFormOpen}
                 size="sm"
                 type="button"
               >
@@ -7949,102 +9947,6 @@ function HistorialEmpleadosView({
               </Button>
             }
           />
-
-          {isAttendanceFormOpen && (
-            <div className="border-b border-white/10 p-4">
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="text-xs font-semibold text-zinc-500">
-                  Empleado
-                  <select
-                    className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none"
-                    onChange={(event) => syncAttendanceEmployee(event.target.value)}
-                    value={attendanceForm.employeeName}
-                  >
-                    <option value="">Elegir empleado</option>
-                    {staff.map((person) => (
-                      <option key={person.id ?? person.name} value={person.name}>
-                        {person.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="text-xs font-semibold text-zinc-500">
-                  Fecha y hora
-                  <input
-                    className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none"
-                    onChange={(event) =>
-                      setAttendanceForm((current) => ({
-                        ...current,
-                        recordedAt: event.target.value,
-                      }))
-                    }
-                    type="datetime-local"
-                    value={attendanceForm.recordedAt}
-                  />
-                </label>
-                <label className="text-xs font-semibold text-zinc-500">
-                  Tipo
-                  <select
-                    className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none"
-                    onChange={(event) =>
-                      setAttendanceForm((current) => ({
-                        ...current,
-                        eventType: event.target.value as AttendanceEvent,
-                      }))
-                    }
-                    value={attendanceForm.eventType}
-                  >
-                    <option value="entrada">Entrada</option>
-                    <option value="salida">Salida</option>
-                  </select>
-                </label>
-                <label className="text-xs font-semibold text-zinc-500">
-                  Turno
-                  <select
-                    className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none"
-                    onChange={(event) =>
-                      setAttendanceForm((current) => ({
-                        ...current,
-                        shift: event.target.value as ShiftName,
-                      }))
-                    }
-                    value={attendanceForm.shift}
-                  >
-                    <option value="manana">Mañana</option>
-                    <option value="tarde">Tarde</option>
-                  </select>
-                </label>
-              </div>
-              <div className="mt-3 flex justify-end gap-2">
-                <Button
-                  className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                  onClick={async () => {
-                    const saved = await saveAttendanceRecord(attendanceForm);
-                    if (saved) {
-                      setIsCreatingAttendance(false);
-                      setEditingAttendanceId(null);
-                      setAttendanceForm(emptyAttendance());
-                    }
-                  }}
-                  type="button"
-                >
-                  Guardar
-                </Button>
-                <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                  onClick={() => {
-                    setIsCreatingAttendance(false);
-                    setEditingAttendanceId(null);
-                    setAttendanceForm(emptyAttendance());
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  Cancelar
-                </Button>
-              </div>
-            </div>
-          )}
 
           <div className="space-y-3 p-4">
             {paginatedAttendance.map((record) => {
@@ -8056,15 +9958,15 @@ function HistorialEmpleadosView({
                   key={record.id}
                 >
                   <div className="min-w-0">
-                    <p className="font-semibold text-zinc-100">{displayName}</p>
-                    <p className="mt-1 text-sm text-zinc-400">
+                    <p className="truncate font-semibold text-zinc-100">{displayName}</p>
+                    <p className="mt-1 truncate text-sm text-zinc-400">
                       {record.eventType === "entrada" ? "Entrada" : "Salida"} • Turno{" "}
                       {record.shift === "manana" ? "mañana" : "tarde"} •{" "}
                       {formatFullDateTime(record.recordedAt)}
                     </p>
                   </div>
                   <Button
-                    className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+                    className="shrink-0 border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
                     onClick={() => {
                       setEditingAttendanceId(record.id);
                       setIsCreatingAttendance(false);
@@ -8094,15 +9996,292 @@ function HistorialEmpleadosView({
           </div>
         </DarkPanel>
       </div>
+
+      {isEmployeeFormOpen && (
+        <StockFormModal
+          icon={Users}
+          onClose={closeEmployeeForm}
+          title={editingId ? "Editar empleado" : "Agregar empleado"}
+        >
+          <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            <InlineInput
+              label="Nombre"
+              onChange={(value) => updateEmployeeDraft({ name: value })}
+              value={employeeDraft.name}
+            />
+            <InlineInput
+              label="Rol"
+              onChange={(value) => updateEmployeeDraft({ role: value })}
+              value={employeeDraft.role}
+            />
+            <InlineInput
+              label="Turno"
+              onChange={(value) => updateEmployeeDraft({ shift: value })}
+              value={employeeDraft.shift}
+            />
+            <InlineInput
+              label="Sector"
+              onChange={(value) => updateEmployeeDraft({ area: value })}
+              value={employeeDraft.area}
+            />
+            <InlineInput
+              label="PIN"
+              onChange={(value) => updateEmployeeDraft({ pin: value })}
+              value={employeeDraft.pin ?? ""}
+            />
+            <label className="min-w-0 text-xs font-semibold text-zinc-500">
+              Estado
+              <select
+                className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm font-semibold text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onChange={(event) =>
+                  updateEmployeeDraft({
+                    status: event.target.value as StaffMember["status"],
+                  })
+                }
+                value={employeeDraft.status}
+              >
+                {statusOptions.map((status) => (
+                  <option key={status}>{status}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-col-reverse gap-2 p-4 sm:flex-row sm:justify-end">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={closeEmployeeForm}
+              type="button"
+              variant="outline"
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+              onClick={saveEmployeeForm}
+              type="button"
+            >
+              {editingId ? "Guardar cambios" : "Guardar empleado"}
+            </Button>
+          </div>
+        </StockFormModal>
+      )}
+
+      {isAttendanceFormOpen && (
+        <StockFormModal
+          icon={CalendarClock}
+          onClose={closeAttendanceForm}
+          title={editingAttendanceId ? "Editar fichaje" : "Agregar fichaje"}
+        >
+          <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2">
+            <label className="min-w-0 text-xs font-semibold text-zinc-500">
+              Empleado
+              <select
+                className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm font-semibold text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onChange={(event) => syncAttendanceEmployee(event.target.value)}
+                value={attendanceForm.employeeName}
+              >
+                <option value="">Elegir empleado</option>
+                {staff.map((person) => (
+                  <option key={person.id ?? person.name} value={person.name}>
+                    {person.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="min-w-0 text-xs font-semibold text-zinc-500">
+              Fecha y hora
+              <input
+                className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm font-semibold text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onChange={(event) =>
+                  setAttendanceForm((current) => ({
+                    ...current,
+                    recordedAt: event.target.value,
+                  }))
+                }
+                type="datetime-local"
+                value={attendanceForm.recordedAt}
+              />
+            </label>
+            <label className="min-w-0 text-xs font-semibold text-zinc-500">
+              Tipo
+              <select
+                className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm font-semibold text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onChange={(event) =>
+                  setAttendanceForm((current) => ({
+                    ...current,
+                    eventType: event.target.value as AttendanceEvent,
+                  }))
+                }
+                value={attendanceForm.eventType}
+              >
+                <option value="entrada">Entrada</option>
+                <option value="salida">Salida</option>
+              </select>
+            </label>
+            <label className="min-w-0 text-xs font-semibold text-zinc-500">
+              Turno
+              <select
+                className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm font-semibold text-zinc-100 outline-none transition focus:border-cyan-300/60"
+                onChange={(event) =>
+                  setAttendanceForm((current) => ({
+                    ...current,
+                    shift: event.target.value as ShiftName,
+                  }))
+                }
+                value={attendanceForm.shift}
+              >
+                <option value="manana">Mañana</option>
+                <option value="tarde">Tarde</option>
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-col-reverse gap-2 p-4 sm:flex-row sm:justify-end">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={closeAttendanceForm}
+              type="button"
+              variant="outline"
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+              onClick={saveAttendanceForm}
+              type="button"
+            >
+              {editingAttendanceId ? "Guardar cambios" : "Guardar fichaje"}
+            </Button>
+          </div>
+        </StockFormModal>
+      )}
     </div>
   );
 }
 
-const formatAuditValue = (value: unknown) => {
+const auditEntityLabels: Record<string, string> = {
+  cierres_caja: "Cierre de caja",
+  comisiones: "Comisiones",
+  comisiones_historial: "Historial de comisiones",
+  empleado: "Empleado",
+  gastos: "Gastos",
+  gastos_historial: "Historial de gastos",
+  producto: "Producto",
+  stock: "Stock",
+};
+
+const auditActionLabels: Record<string, string> = {
+  actualizar: "Actualizó",
+  editar: "Editó",
+  eliminar: "Eliminó",
+  guardar: "Guardó",
+};
+
+const hiddenAuditKeys = new Set([
+  "activo",
+  "clave",
+  "creado_por",
+  "entidad_id",
+  "id",
+  "orden",
+  "sucursal_id",
+  "usuario_id",
+]);
+
+const isAuditRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const formatAuditEntity = (entity: string) =>
+  auditEntityLabels[entity] ?? capitalizeLabel(entity.replace(/_/g, " "));
+
+const formatAuditAction = (action: string) =>
+  auditActionLabels[action] ?? capitalizeLabel(action.replace(/_/g, " "));
+
+const formatAuditLabel = (key: string) =>
+  capitalizeLabel(key.replace(/_/g, " "));
+
+const formatAuditScalar = (value: unknown) => {
   if (typeof value === "number") return formatCurrency(value);
-  if (typeof value === "string") return value || "-";
+  if (typeof value === "boolean") return value ? "Sí" : "No";
+  if (typeof value === "string") return value.trim() || "-";
   if (value === null || typeof value === "undefined") return "-";
-  return JSON.stringify(value);
+  return String(value);
+};
+
+const formatExpenseAuditList = (value: unknown) => {
+  if (!Array.isArray(value)) return null;
+  const rows = value.filter(isAuditRecord);
+  if (!rows.length) return null;
+
+  return rows
+    .map((expense, index) => {
+      const name = String(expense.nombre ?? expense.name ?? `Gasto ${index + 1}`);
+      const category =
+        typeof expense.categoria === "string" && expense.categoria
+          ? ` (${expense.categoria})`
+          : "";
+      return `${name}${category}: ${formatCurrency(toNumber(expense.monto as NumericValue))}`;
+    })
+    .join("\n");
+};
+
+const formatCommissionChannels = (value: unknown) => {
+  if (!isAuditRecord(value)) return null;
+  const labels: Record<string, string> = {
+    local: "Local",
+    pedidos_ya: "PedidosYa",
+  };
+
+  return Object.entries(value)
+    .map(
+      ([key, amount]) =>
+        `${labels[key] ?? formatAuditLabel(key)}: ${formatCurrency(toNumber(amount as NumericValue))}`,
+    )
+    .join("\n");
+};
+
+const formatCommissionMethods = (value: unknown) => {
+  if (!Array.isArray(value)) return null;
+  const rows = value.filter(isAuditRecord);
+  if (!rows.length) return null;
+
+  return rows
+    .map((method, index) => {
+      const name = String(method.nombre ?? method.name ?? `Método ${index + 1}`);
+      return `${name}: ${toNumber(method.comision as NumericValue)}%`;
+    })
+    .join("\n");
+};
+
+const formatAuditValue = (value: unknown): string => {
+  const expenseList = formatExpenseAuditList(value);
+  if (expenseList) return expenseList;
+
+  if (Array.isArray(value)) {
+    if (!value.length) return "-";
+    return value
+      .map((item, index) => {
+        if (!isAuditRecord(item)) return formatAuditScalar(item);
+        const summary = Object.entries(item)
+          .filter(([key]) => !hiddenAuditKeys.has(key))
+          .map(
+            ([key, nestedValue]) =>
+              `${formatAuditLabel(key)}: ${formatAuditScalar(nestedValue)}`,
+          )
+          .join(", ");
+        return summary || `Item ${index + 1}`;
+      })
+      .join("\n");
+  }
+
+  if (isAuditRecord(value)) {
+    const summary = Object.entries(value)
+      .filter(([key]) => !hiddenAuditKeys.has(key))
+      .map(([key, nestedValue]) => `${formatAuditLabel(key)}: ${formatAuditValue(nestedValue)}`)
+      .join("\n");
+    return summary || "Cambio registrado";
+  }
+
+  return formatAuditScalar(value);
 };
 
 const getAuditDetailItems = (log: AuditLog): Array<[string, unknown]> => {
@@ -8110,7 +10289,7 @@ const getAuditDetailItems = (log: AuditLog): Array<[string, unknown]> => {
 
   if (log.entity === "cierres_caja") {
     return [
-      ["Turno", detail.turno === "manana" ? "Manana" : "Tarde"],
+      ["Turno", detail.turno === "manana" ? "Mañana" : "Tarde"],
       ["Ventas", String(detail.ventas ?? 0)],
       ["Efectivo contado", formatCurrency(toNumber(detail.efectivo_contado as NumericValue))],
       ["Diferencia", formatCurrency(Number(detail.diferencia ?? 0))],
@@ -8126,16 +10305,42 @@ const getAuditDetailItems = (log: AuditLog): Array<[string, unknown]> => {
     ];
   }
 
+  if (log.entity === "gastos" || log.entity === "gastos_historial") {
+    if (log.action === "eliminar") {
+      return [["Cambio", "Historial eliminado"]];
+    }
+
+    return [
+      ["Total", toNumber(detail.total as NumericValue)],
+      ["Gastos", formatExpenseAuditList(detail.gastos) ?? detail.gastos],
+    ];
+  }
+
+  if (log.entity === "comisiones" || log.entity === "comisiones_historial") {
+    if (log.action === "eliminar") {
+      return [["Cambio", "Historial eliminado"]];
+    }
+
+    return [
+      ["Canales", formatCommissionChannels(detail.canales) ?? detail.canales],
+      ["Métodos de pago", formatCommissionMethods(detail.metodos) ?? detail.metodos],
+    ];
+  }
+
+  if (log.action === "eliminar") {
+    return [["Cambio", "Registro eliminado"]];
+  }
+
   return Object.entries(detail)
-    .filter(([key]) => !["creado_por", "sucursal_id"].includes(key))
+    .filter(([key]) => !hiddenAuditKeys.has(key))
     .slice(0, 6)
-    .map(([key, value]) => [key.replace(/_/g, " "), value]);
+    .map(([key, value]) => [formatAuditLabel(key), value]);
 };
 
 function AuditoriaView({ auditLogs }: { auditLogs: AuditLog[] }) {
   return (
     <DarkPanel>
-      <PanelHeader icon={ReceiptText} title="Auditoria" />
+      <PanelHeader icon={ReceiptText} title="Auditoría" />
       <div className="space-y-3 p-4">
         {auditLogs.length ? (
           auditLogs.map((log) => {
@@ -8150,9 +10355,11 @@ function AuditoriaView({ auditLogs }: { auditLogs: AuditLog[] }) {
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className="border-cyan-300/20 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/10">
-                      {log.action}
+                      {formatAuditAction(log.action)}
                     </Badge>
-                    <p className="font-semibold text-zinc-100">{log.entity}</p>
+                    <p className="font-semibold text-zinc-100">
+                      {formatAuditEntity(log.entity)}
+                    </p>
                   </div>
                   <p className="mt-2 text-sm text-zinc-400">
                     {log.userName ?? "Sistema"} - {formatFullDateTime(log.createdAt)}
@@ -8165,7 +10372,7 @@ function AuditoriaView({ auditLogs }: { auditLogs: AuditLog[] }) {
                       key={String(label)}
                     >
                       <p className="text-xs uppercase text-zinc-500">{label}</p>
-                      <p className="mt-1 break-words text-sm font-semibold text-zinc-100">
+                      <p className="mt-1 whitespace-pre-line break-words text-sm font-semibold text-zinc-100">
                         {formatAuditValue(value)}
                       </p>
                     </div>
@@ -8177,7 +10384,7 @@ function AuditoriaView({ auditLogs }: { auditLogs: AuditLog[] }) {
           })
         ) : (
           <div className="rounded-lg border border-dashed border-white/10 bg-black/20 px-4 py-8 text-center">
-            <p className="text-sm text-zinc-500">Todavia no hay cambios guardados.</p>
+            <p className="text-sm text-zinc-500">Todavía no hay cambios guardados.</p>
           </div>
         )}
       </div>
@@ -8282,6 +10489,16 @@ function StockView({
     "Todas",
     ...new Set(products.map((product) => product.category).sort((left, right) => left.localeCompare(right, "es-AR"))),
   ];
+  const productCategoryOptions = productCategories.filter(
+    (category) => category !== "Todas",
+  );
+  const flavorCategoryOptions = [
+    ...new Set(
+      flavors
+        .map((flavor) => getFlavorCategoryName(flavor.category))
+        .sort((left, right) => left.localeCompare(right, "es-AR")),
+    ),
+  ];
   const filteredProducts = products
     .filter((product) => {
       const matchesCategory =
@@ -8344,6 +10561,25 @@ function StockView({
   const quickStockIncrement = Math.max(0, Number(quickStockAmount || 0));
   const quickStockCurrent = quickStockTarget?.item.stock ?? 0;
   const quickStockNext = quickStockCurrent + quickStockIncrement;
+  const openProductForm = () => {
+    setNewProduct(emptyProduct);
+    setEditingId(null);
+    setIsCreatingProduct(true);
+  };
+  const closeProductForm = () => {
+    setIsCreatingProduct(false);
+    setNewProduct(emptyProduct);
+  };
+  const openFlavorForm = () => {
+    setNewFlavor(emptyFlavor);
+    setEditingFlavorId(null);
+    setEditingFlavor(null);
+    setIsCreatingFlavor(true);
+  };
+  const closeFlavorForm = () => {
+    setIsCreatingFlavor(false);
+    setNewFlavor(emptyFlavor);
+  };
 
   const confirmQuickStock = async () => {
     if (!quickStockTarget || quickStockIncrement <= 0) return;
@@ -8521,11 +10757,7 @@ function StockView({
             right={canManageStock ? (
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                onClick={() => {
-                  setIsCreatingFlavor(true);
-                  setEditingFlavorId(null);
-                  setEditingFlavor(null);
-                }}
+                onClick={openFlavorForm}
                 size="sm"
                 type="button"
               >
@@ -8562,103 +10794,12 @@ function StockView({
               </Button>
             </div>
 
-            {canManageStock && isCreatingFlavor && (
-              <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-                  <InlineInput
-                    label="Nombre"
-                    onChange={(value) =>
-                      setNewFlavor((current) => ({ ...current, name: value }))
-                    }
-                    value={newFlavor.name}
-                  />
-                  <InlineInput
-                    label="Categoría"
-                    onChange={(value) =>
-                      setNewFlavor((current) => ({ ...current, category: value }))
-                    }
-                    value={newFlavor.category}
-                  />
-                  <InlineInput
-                    label="Stock"
-                    onChange={(value) =>
-                      setNewFlavor((current) => ({
-                        ...current,
-                        stock: Number(value || 0),
-                      }))
-                    }
-                    type="number"
-                    value={String(newFlavor.stock)}
-                  />
-                  <InlineInput
-                    label="Mínimo"
-                    onChange={(value) =>
-                      setNewFlavor((current) => ({
-                        ...current,
-                        minStock: Number(value || 0),
-                      }))
-                    }
-                    type="number"
-                    value={String(newFlavor.minStock)}
-                  />
-                  <InlineInput
-                    label="Unidad"
-                    onChange={(value) =>
-                      setNewFlavor((current) => ({ ...current, unit: value }))
-                    }
-                    value={newFlavor.unit}
-                  />
-                  <label className="text-xs font-semibold text-zinc-500">
-                    Color
-                    <input
-                      className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-2 text-sm text-zinc-100 outline-none transition focus:border-cyan-300/60"
-                      onChange={(event) =>
-                        setNewFlavor((current) => ({
-                          ...current,
-                          color: event.target.value,
-                        }))
-                      }
-                      type="color"
-                      value={newFlavor.color}
-                    />
-                  </label>
-                </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
-                    onClick={async () => {
-                      const saved = await saveFlavor(newFlavor);
-                      if (saved) {
-                        setNewFlavor(emptyFlavor);
-                        setIsCreatingFlavor(false);
-                      }
-                    }}
-                    type="button"
-                    variant="outline"
-                  >
-                    Guardar
-                  </Button>
-                  <Button
-                    className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                    onClick={() => {
-                      setIsCreatingFlavor(false);
-                      setNewFlavor(emptyFlavor);
-                    }}
-                    type="button"
-                    variant="outline"
-                  >
-                    Cancelar
-                  </Button>
-                </div>
-              </div>
-            )}
-
             <div className="space-y-5">
               {flavorGroups.map((group) => (
                 <div className="space-y-3" key={group.category}>
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-semibold text-zinc-100">{group.category}</p>
+                      <p className="font-semibold text-zinc-100">{formatCategoryLabel(group.category)}</p>
                       <p className="text-sm text-zinc-500">
                         {group.items.length} gusto{group.items.length === 1 ? "" : "s"}
                       </p>
@@ -8705,7 +10846,7 @@ function StockView({
                               {flavor.name}
                             </p>
                             <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
-                              {flavor.category}
+                              {formatCategoryLabel(flavor.category)}
                             </Badge>
                           </div>
                           {activeBatch ? (
@@ -8715,7 +10856,7 @@ function StockView({
                             </p>
                           ) : latestClosedBatch?.suggestedYield ? (
                             <p className="mt-1 text-xs text-zinc-500">
-                              Sin balde activo. Ultimo rindio{" "}
+                              Sin balde activo. Último rindió{" "}
                               {Math.round(latestClosedBatch.suggestedYield)} {flavor.unit}
                             </p>
                           ) : (
@@ -9067,10 +11208,7 @@ function StockView({
             right={canManageStock ? (
               <Button
                 className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
-                onClick={() => {
-                  setIsCreatingProduct(true);
-                  setEditingId(null);
-                }}
+                onClick={openProductForm}
                 size="sm"
                 type="button"
               >
@@ -9136,42 +11274,9 @@ function StockView({
                     }}
                     type="button"
                   >
-                    {category}
+                    {formatCategoryLabel(category)}
                   </button>
                 ))}
-              </div>
-            )}
-
-            {canManageStock && isCreatingProduct && (
-              <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
-                <ProductFields product={newProduct} setProduct={setNewProduct} />
-                <div className="flex flex-wrap justify-end gap-2">
-                  <Button
-                    className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
-                    onClick={async () => {
-                      const saved = await saveProduct(newProduct);
-                      if (saved) {
-                        setNewProduct(emptyProduct);
-                        setIsCreatingProduct(false);
-                      }
-                    }}
-                    type="button"
-                    variant="outline"
-                  >
-                    Guardar
-                  </Button>
-                  <Button
-                    className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
-                    onClick={() => {
-                      setIsCreatingProduct(false);
-                      setNewProduct(emptyProduct);
-                    }}
-                    type="button"
-                    variant="outline"
-                  >
-                    Cancelar
-                  </Button>
-                </div>
               </div>
             )}
 
@@ -9190,7 +11295,7 @@ function StockView({
                               {product.name}
                             </p>
                             <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
-                              {product.category}
+                              {formatCategoryLabel(product.category)}
                             </Badge>
                           </div>
                           <p className="mt-1 text-sm text-zinc-500">
@@ -9212,6 +11317,7 @@ function StockView({
                       {canManageStock && isEditing ? (
                         <div className="space-y-3">
                           <ProductFields
+                            categoryOptions={productCategoryOptions}
                             product={editingProduct}
                             setProduct={setEditingProduct}
                           />
@@ -9333,6 +11439,74 @@ function StockView({
         </DarkPanel>
       )}
 
+      {canManageStock && isCreatingProduct && (
+        <StockFormModal
+          icon={Package}
+          onClose={closeProductForm}
+          title="Agregar producto"
+        >
+          <ProductFields
+            categoryOptions={productCategoryOptions}
+            product={newProduct}
+            setProduct={setNewProduct}
+          />
+          <div className="flex flex-col-reverse gap-2 border-t border-white/10 p-4 sm:flex-row sm:justify-end">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={closeProductForm}
+              type="button"
+              variant="outline"
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              onClick={async () => {
+                const saved = await saveProduct(newProduct);
+                if (saved) closeProductForm();
+              }}
+              type="button"
+            >
+              Guardar producto
+            </Button>
+          </div>
+        </StockFormModal>
+      )}
+
+      {canManageStock && isCreatingFlavor && (
+        <StockFormModal
+          icon={Snowflake}
+          onClose={closeFlavorForm}
+          title="Agregar gusto"
+        >
+          <FlavorFields
+            categoryOptions={flavorCategoryOptions}
+            flavor={newFlavor}
+            setFlavor={setNewFlavor}
+          />
+          <div className="flex flex-col-reverse gap-2 border-t border-white/10 p-4 sm:flex-row sm:justify-end">
+            <Button
+              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              onClick={closeFlavorForm}
+              type="button"
+              variant="outline"
+            >
+              Cancelar
+            </Button>
+            <Button
+              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              onClick={async () => {
+                const saved = await saveFlavor(newFlavor);
+                if (saved) closeFlavorForm();
+              }}
+              type="button"
+            >
+              Guardar gusto
+            </Button>
+          </div>
+        </StockFormModal>
+      )}
+
       {quickStockTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
           <div className="w-full max-w-lg overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl">
@@ -9419,132 +11593,394 @@ function StockView({
   );
 }
 
+function StockFormModal({
+  children,
+  icon,
+  onClose,
+  title,
+}: {
+  children: React.ReactNode;
+  icon: LucideIcon;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      role="presentation"
+    >
+      <div
+        aria-modal="true"
+        className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl"
+        role="dialog"
+      >
+        <PanelHeader
+          icon={icon}
+          right={
+            <Button
+              className="size-9 border-white/10 bg-white/5 p-0 text-zinc-100 hover:bg-white/10"
+              onClick={onClose}
+              type="button"
+              variant="outline"
+            >
+              <X className="size-4" />
+              <span className="sr-only">Cerrar</span>
+            </Button>
+          }
+          title={title}
+        />
+        <div className="max-h-[calc(92vh-74px)] overflow-y-auto">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 function ProductFields({
+  categoryOptions,
   product,
   setProduct,
 }: {
+  categoryOptions: string[];
   product: ProductForm;
   setProduct: React.Dispatch<React.SetStateAction<ProductForm>>;
 }) {
+  const hasFlavorSetup = product.maxFlavors > 0 || product.flavorUsage > 0;
+
   return (
-    <div className="grid gap-3 border-b border-white/10 p-4 sm:grid-cols-2 xl:grid-cols-5">
-      <InlineInput
-        label="Nombre"
-        onChange={(value) => setProduct((current) => ({ ...current, name: value }))}
-        value={product.name}
-      />
-      <InlineInput
-        label="Rubro"
-        onChange={(value) =>
-          setProduct((current) => ({ ...current, category: value }))
-        }
-        value={product.category}
-      />
-      <InlineInput
-        label="Precio"
-        onChange={(value) =>
-          setProduct((current) => ({ ...current, price: Number(value || 0) }))
-        }
-        type="number"
-        value={String(product.price)}
-      />
-      <InlineInput
-        label="Costo"
-        onChange={(value) =>
-          setProduct((current) => ({ ...current, cost: Number(value || 0) }))
-        }
-        type="number"
-        value={String(product.cost)}
-      />
-      <InlineInput
-        label="Stock"
-        onChange={(value) =>
-          setProduct((current) => ({ ...current, stock: Number(value || 0) }))
-        }
-        type="number"
-        value={String(product.stock)}
-      />
-      <InlineInput
-        label="Mínimo"
-        onChange={(value) =>
-          setProduct((current) => ({ ...current, minStock: Number(value || 0) }))
-        }
-        type="number"
-        value={String(product.minStock)}
-      />
-      <InlineInput
-        label="Unidad"
-        onChange={(value) => setProduct((current) => ({ ...current, unit: value }))}
-        value={product.unit}
-      />
-      <InlineInput
-        label="Max gustos"
-        onChange={(value) =>
-          setProduct((current) => ({
-            ...current,
-            maxFlavors: Number(value || 0),
-          }))
-        }
-        type="number"
-        value={String(product.maxFlavors)}
-      />
-      <InlineInput
-        label="Porciones estimadas"
-        onChange={(value) =>
-          setProduct((current) => ({
-            ...current,
-            flavorUsage: Number(value || 0),
-          }))
-        }
-        type="number"
-        value={String(product.flavorUsage)}
-      />
-      <ImageUploadControl
-        carpeta="productos"
-        label="Imagen del producto"
-        onChange={(value) =>
-          setProduct((current) => ({ ...current, imageUrl: value }))
-        }
-        tipo="producto"
-        value={product.imageUrl}
-      />
+    <div className="min-w-0 space-y-4 border-b border-white/10 p-4">
+      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(220px,1.1fr)_minmax(220px,0.9fr)]">
+        <InlineInput
+          label="Nombre del producto"
+          onChange={(value) => setProduct((current) => ({ ...current, name: value }))}
+          placeholder="Ej: 1/4 kg helado"
+          value={product.name}
+        />
+        <ProductCategoryField
+          categories={categoryOptions}
+          onChange={(value) => setProduct((current) => ({ ...current, category: value }))}
+          value={product.category}
+        />
+      </div>
+
+      <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <InlineInput
+          label="Precio de venta"
+          onChange={(value) =>
+            setProduct((current) => ({ ...current, price: Number(value || 0) }))
+          }
+          type="number"
+          value={String(product.price)}
+        />
+        <InlineInput
+          label="Costo"
+          onChange={(value) =>
+            setProduct((current) => ({ ...current, cost: Number(value || 0) }))
+          }
+          type="number"
+          value={String(product.cost)}
+        />
+        <InlineInput
+          label="Stock actual"
+          onChange={(value) =>
+            setProduct((current) => ({ ...current, stock: Number(value || 0) }))
+          }
+          type="number"
+          value={String(product.stock)}
+        />
+        <InlineInput
+          label="Avisar con stock"
+          onChange={(value) =>
+            setProduct((current) => ({ ...current, minStock: Number(value || 0) }))
+          }
+          type="number"
+          value={String(product.minStock)}
+        />
+      </div>
+
+      <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-semibold text-zinc-100">Gustos</p>
+            <p className="text-xs text-zinc-500">
+              Usalo solo para helados con elección de sabores.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:w-56">
+            <Button
+              className={cn(
+                "h-9 border-white/10",
+                !hasFlavorSetup
+                  ? "bg-cyan-300 text-zinc-950 hover:bg-cyan-200"
+                  : "bg-white/5 text-zinc-100 hover:bg-white/10",
+              )}
+              onClick={() =>
+                setProduct((current) => ({
+                  ...current,
+                  flavorUsage: 0,
+                  maxFlavors: 0,
+                }))
+              }
+              type="button"
+              variant="outline"
+            >
+              No
+            </Button>
+            <Button
+              className={cn(
+                "h-9 border-white/10",
+                hasFlavorSetup
+                  ? "bg-cyan-300 text-zinc-950 hover:bg-cyan-200"
+                  : "bg-white/5 text-zinc-100 hover:bg-white/10",
+              )}
+              onClick={() =>
+                setProduct((current) => ({
+                  ...current,
+                  flavorUsage: current.flavorUsage || 1,
+                  maxFlavors: current.maxFlavors || 1,
+                }))
+              }
+              type="button"
+              variant="outline"
+            >
+              Sí
+            </Button>
+          </div>
+        </div>
+
+        {hasFlavorSetup ? (
+          <div className="mt-3 grid min-w-0 gap-3 sm:grid-cols-2">
+            <InlineInput
+              label="Gustos a elegir"
+              onChange={(value) =>
+                setProduct((current) => ({
+                  ...current,
+                  maxFlavors: Number(value || 0),
+                }))
+              }
+              type="number"
+              value={String(product.maxFlavors)}
+            />
+            <InlineInput
+              label="Porciones que descuenta"
+              onChange={(value) =>
+                setProduct((current) => ({
+                  ...current,
+                  flavorUsage: Number(value || 0),
+                }))
+              }
+              type="number"
+              value={String(product.flavorUsage)}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      <details
+        className="rounded-lg border border-white/10 bg-black/20 p-3"
+        open={product.imageUrl ? true : undefined}
+      >
+        <summary className="cursor-pointer select-none text-sm font-semibold text-zinc-100">
+          Imagen del producto opcional
+        </summary>
+        <ImageUploadControl
+          carpeta="productos"
+          className="mt-3"
+          label="Imagen"
+          onChange={(value) =>
+            setProduct((current) => ({ ...current, imageUrl: value }))
+          }
+          tipo="producto"
+          value={product.imageUrl}
+        />
+      </details>
+    </div>
+  );
+}
+
+function FlavorFields({
+  categoryOptions,
+  flavor,
+  setFlavor,
+}: {
+  categoryOptions: string[];
+  flavor: FlavorForm;
+  setFlavor: React.Dispatch<React.SetStateAction<FlavorForm>>;
+}) {
+  return (
+    <div className="min-w-0 space-y-4 border-b border-white/10 p-4">
+      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(220px,1.1fr)_minmax(220px,0.9fr)]">
+        <InlineInput
+          label="Nombre del gusto"
+          onChange={(value) =>
+            setFlavor((current) => ({ ...current, name: value }))
+          }
+          placeholder="Ej: Chocolate"
+          value={flavor.name}
+        />
+        <ProductCategoryField
+          categories={categoryOptions}
+          onChange={(value) =>
+            setFlavor((current) => ({ ...current, category: value }))
+          }
+          value={flavor.category}
+        />
+      </div>
+
+      <div className="grid min-w-0 gap-3 sm:grid-cols-3">
+        <InlineInput
+          label="Stock actual"
+          onChange={(value) =>
+            setFlavor((current) => ({
+              ...current,
+              stock: Number(value || 0),
+            }))
+          }
+          type="number"
+          value={String(flavor.stock)}
+        />
+        <InlineInput
+          label="Avisar con stock"
+          onChange={(value) =>
+            setFlavor((current) => ({
+              ...current,
+              minStock: Number(value || 0),
+            }))
+          }
+          type="number"
+          value={String(flavor.minStock)}
+        />
+        <label className="min-w-0 text-xs font-semibold text-zinc-500">
+          Color
+          <div className="mt-1 grid h-10 grid-cols-[42px_minmax(0,1fr)] overflow-hidden rounded-lg border border-white/10 bg-[#080a0c] focus-within:border-cyan-300/60">
+            <input
+              className="h-10 w-full cursor-pointer border-0 bg-transparent p-1"
+              onChange={(event) =>
+                setFlavor((current) => ({
+                  ...current,
+                  color: event.target.value,
+                }))
+              }
+              type="color"
+              value={flavor.color}
+            />
+            <div className="flex min-w-0 items-center px-3 text-sm font-semibold text-zinc-100">
+              <span className="truncate">{flavor.color}</span>
+            </div>
+          </div>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function ProductCategoryField({
+  categories,
+  onChange,
+  value,
+}: {
+  categories: string[];
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  const selectedExistingCategory = categories.find((category) => category === value.trim());
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const showNewCategoryInput =
+    isCreatingCategory || categories.length === 0 || Boolean(value.trim() && !selectedExistingCategory);
+
+  useEffect(() => {
+    if (value.trim() && !selectedExistingCategory) {
+      setIsCreatingCategory(true);
+    }
+  }, [selectedExistingCategory, value]);
+
+  return (
+    <div className="min-w-0">
+      <label className="block min-w-0 text-xs font-semibold text-zinc-500">
+        Categoría
+        <select
+          className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm font-semibold text-zinc-100 outline-none transition focus:border-cyan-300/60"
+          onChange={(event) => {
+            if (event.target.value === "__new__") {
+              setIsCreatingCategory(true);
+              onChange("");
+              return;
+            }
+
+            setIsCreatingCategory(false);
+            onChange(event.target.value);
+          }}
+          value={selectedExistingCategory ?? (showNewCategoryInput ? "__new__" : "")}
+        >
+          <option value="" disabled>
+            Elegir categoría
+          </option>
+          {categories.map((category) => (
+            <option key={category} value={category}>
+              {formatCategoryLabel(category)}
+            </option>
+          ))}
+          <option value="__new__">Crear categoría nueva</option>
+        </select>
+      </label>
+
+      {showNewCategoryInput ? (
+        <input
+          className="mt-2 h-10 w-full rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-50 outline-none transition placeholder:text-cyan-100/50 focus:border-cyan-200"
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Nombre de la nueva categoría"
+          value={selectedExistingCategory ? "" : value}
+        />
+      ) : null}
     </div>
   );
 }
 
 function InlineInput({
+  className,
+  help,
   label,
   onChange,
+  placeholder,
   type = "text",
   value,
 }: {
+  className?: string;
+  help?: string;
   label: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   type?: "text" | "number";
   value: string;
 }) {
   return (
-    <label className="text-xs font-semibold text-zinc-500">
+    <label className={cn("min-w-0 text-xs font-semibold text-zinc-500", className)}>
       {label}
       <input
         className="mt-1 h-10 w-full rounded-lg border border-white/10 bg-[#080a0c] px-3 text-sm text-zinc-100 outline-none transition focus:border-cyan-300/60"
         min={type === "number" ? 0 : undefined}
         onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
         type={type}
         value={value}
       />
+      {help ? <p className="mt-1 text-xs font-normal text-zinc-500">{help}</p> : null}
     </label>
   );
 }
 
 function ImageUploadControl({
   carpeta,
+  className,
   label,
   onChange,
   tipo,
   value,
 }: {
   carpeta: string;
+  className?: string;
   label: string;
   onChange: (value: string) => void;
   tipo: "producto" | "logo" | "favicon";
@@ -9588,11 +12024,11 @@ function ImageUploadControl({
   };
 
   return (
-    <div className="text-xs font-semibold text-zinc-500">
+    <div className={cn("min-w-0 max-w-full text-xs font-semibold text-zinc-500", className)}>
       {label}
-      <div className="mt-1 rounded-lg border border-white/10 bg-[#080a0c] p-3">
+      <div className="mt-1 min-w-0 max-w-full overflow-hidden rounded-lg border border-white/10 bg-[#080a0c] p-3">
         {value ? (
-          <div className="mb-3 flex items-center gap-3">
+          <div className="mb-3 grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
             <div
               className="size-14 shrink-0 rounded-lg border border-white/10 bg-cover bg-center"
               style={{ backgroundImage: `url("${value}")` }}
@@ -9601,10 +12037,12 @@ function ImageUploadControl({
               <p className="truncate text-xs font-semibold text-zinc-200">
                 Imagen optimizada en Supabase
               </p>
-              <p className="truncate text-xs font-normal text-zinc-500">{value}</p>
+              <p className="truncate text-xs font-normal text-zinc-500" title={value}>
+                {value}
+              </p>
             </div>
             <Button
-              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+              className="shrink-0 border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
               onClick={() => onChange("")}
               size="sm"
               type="button"
@@ -9699,27 +12137,29 @@ function DeleteConfirmModal({
 }
 
 function HelpModal({
-  help,
+  activeView,
+  groups,
   isOpen,
   onClose,
 }: {
-  help: { title: string; summary: string; sections: HelpSection[] };
+  activeView: ViewId;
+  groups: HelpGuideGroup[];
   isOpen: boolean;
   onClose: () => void;
 }) {
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [expandedView, setExpandedView] = useState<ViewId | null>(activeView);
 
   useEffect(() => {
-    if (!isOpen) {
-      setExpandedSection(null);
+    if (isOpen) {
+      setExpandedView(activeView);
     }
-  }, [isOpen, help.title]);
+  }, [activeView, isOpen]);
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-3xl overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
+      <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
         <PanelHeader
           icon={CircleHelp}
           right={
@@ -9733,57 +12173,101 @@ function HelpModal({
               Cerrar
             </Button>
           }
-          subtitle={help.summary}
-          title={help.title}
+          subtitle="Guía completa de cada opción del menú: qué es, cómo se usa y qué modifica."
+          title="Ayuda del sistema"
         />
-        <div className="grid gap-3 p-4 md:grid-cols-2">
-          {help.sections.map((section, index) => {
-            const sectionKey = `${help.title}-${section.title}`;
-            const isExpanded = expandedSection === sectionKey;
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+          {groups.map((group) => (
+            <section className="space-y-3" key={group.label}>
+              <p className="px-1 text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-100/80">
+                {group.label}
+              </p>
+              <div className="grid gap-3">
+                {group.items.map(({ help, item }) => {
+                  const Icon = item.icon;
+                  const isExpanded = expandedView === item.id;
 
-            return (
-            <button
-              className={cn(
-                "rounded-lg border bg-black/20 p-4 text-left transition",
-                isExpanded
-                  ? "border-cyan-300/40 bg-cyan-300/5"
-                  : "border-white/10 hover:bg-white/[0.03]",
-              )}
-              key={sectionKey}
-              onClick={() =>
-                setExpandedSection((current) =>
-                  current === sectionKey ? null : sectionKey,
-                )
-              }
-              type="button"
-            >
-              <div className="flex items-start gap-3">
-                <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-cyan-300/10 text-sm font-semibold text-cyan-100">
-                  {index + 1}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold text-zinc-100">{section.title}</p>
-                  <p className="mt-2 text-sm leading-6 text-zinc-400">
-                    {section.description}
-                  </p>
-                  {isExpanded && (
-                    <div className="mt-4 space-y-3 rounded-lg border border-white/10 bg-black/20 p-3">
-                      {section.details.map((detail, detailIndex) => (
-                        <div className="flex items-start gap-3" key={`${sectionKey}-${detailIndex}`}>
-                          <span className="mt-1 size-1.5 shrink-0 rounded-full bg-cyan-300" />
-                          <p className="text-sm leading-6 text-zinc-300">{detail}</p>
+                  return (
+                    <article
+                      className={cn(
+                        "rounded-lg border bg-black/20 transition",
+                        isExpanded
+                          ? "border-cyan-300/40 bg-cyan-300/5"
+                          : "border-white/10",
+                      )}
+                      key={item.id}
+                    >
+                      <button
+                        className="flex w-full items-start gap-3 p-4 text-left"
+                        onClick={() =>
+                          setExpandedView((current) =>
+                            current === item.id ? null : item.id,
+                          )
+                        }
+                        type="button"
+                      >
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-300/10 text-cyan-100">
+                          <Icon className="size-4" />
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="shrink-0 text-cyan-100">
-                  {isExpanded ? <Minus className="size-4" /> : <Plus className="size-4" />}
-                </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-semibold text-zinc-100">{item.label}</p>
+                          <p className="mt-1 text-sm leading-6 text-zinc-400">
+                            {help.summary}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-cyan-100">
+                          {isExpanded ? (
+                            <Minus className="size-4" />
+                          ) : (
+                            <Plus className="size-4" />
+                          )}
+                        </div>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="space-y-3 border-t border-white/10 p-4 pt-3">
+                          {help.sections.map((section, sectionIndex) => (
+                            <div
+                              className="rounded-lg border border-white/10 bg-black/20 p-3"
+                              key={`${item.id}-${section.title}`}
+                            >
+                              <div className="flex items-start gap-3">
+                                <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-white/5 text-xs font-semibold text-cyan-100">
+                                  {sectionIndex + 1}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="font-semibold text-zinc-100">
+                                    {section.title}
+                                  </p>
+                                  <p className="mt-1 text-sm leading-6 text-zinc-400">
+                                    {section.description}
+                                  </p>
+                                  <div className="mt-3 space-y-2">
+                                    {section.details.map((detail, detailIndex) => (
+                                      <div
+                                        className="flex items-start gap-3"
+                                        key={`${item.id}-${section.title}-${detailIndex}`}
+                                      >
+                                        <span className="mt-2 size-1.5 shrink-0 rounded-full bg-cyan-300" />
+                                        <p className="text-sm leading-6 text-zinc-300">
+                                          {detail}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
-            </button>
-          )})}
-        </div>
+            </section>
+          ))}
+                    </div>
       </div>
     </div>
   );
@@ -9804,7 +12288,7 @@ function BrandLogo({
   return (
     <div
       className={cn(
-        "flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
+        "erp-brand-logo flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
         className,
       )}
     >
@@ -9872,9 +12356,9 @@ function DisenoView({
           title="Diseño"
         />
 
-        <div className="grid gap-5 p-4 xl:grid-cols-[1.1fr_0.9fr]">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-4 rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
+        <div className="grid min-w-0 gap-5 p-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
+            <div className="min-w-0 space-y-4 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
               <div>
                 <p className="font-semibold text-[var(--erp-text)]">
                   Nombre e identidad
@@ -9884,7 +12368,7 @@ function DisenoView({
                 </p>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2">
                 <label className="text-xs font-semibold text-[var(--erp-muted)]">
                   Nombre de la página
                   <input
@@ -9903,7 +12387,7 @@ function DisenoView({
                 </label>
               </div>
 
-              <label className="block text-xs font-semibold text-[var(--erp-muted)]">
+              <label className="block min-w-0 text-xs font-semibold text-[var(--erp-muted)]">
                 Tipografía del nombre
                 <select
                   className="mt-1 h-11 w-full rounded-lg border border-white/10 bg-black/30 px-3 text-sm text-zinc-100 outline-none transition focus:border-[var(--erp-primary)]"
@@ -9925,8 +12409,8 @@ function DisenoView({
                 </select>
               </label>
 
-              <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
-                <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-black/20 p-3">
                   <p className="text-xs font-semibold uppercase text-[var(--erp-muted)]">
                     Logo del sistema
                   </p>
@@ -9980,7 +12464,7 @@ function DisenoView({
                   )}
                 </div>
 
-                <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <div className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-black/20 p-3">
                   <ImageUploadControl
                     carpeta="marca"
                     label="Icono de pestaña"
@@ -9995,7 +12479,7 @@ function DisenoView({
               </div>
             </div>
 
-            <div className="space-y-3 rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
+            <div className="min-w-0 space-y-3 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-black/20 p-4 sm:col-span-2">
               <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                   <p className="font-semibold text-[var(--erp-text)]">
@@ -10018,7 +12502,7 @@ function DisenoView({
                 </label>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+            <div className="grid min-w-0 gap-3 md:grid-cols-2 2xl:grid-cols-4">
                 {themeColorPresets.map((preset) => {
                   const isActive = isThemeColorPresetActive(theme, preset);
 
@@ -10143,21 +12627,21 @@ function DisenoView({
             ))}
           </div>
 
-          <div className="space-y-4">
-            <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-bg)] p-4">
-              <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-header)] p-4">
+          <div className="min-w-0 space-y-4">
+            <div className="min-w-0 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-bg)] p-4">
+              <div className="min-w-0 overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-header)] p-4">
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--erp-primary)]">
                   {theme.brandSubtitle}
                 </p>
                 <h3
-                  className="mt-2 text-4xl leading-none text-[var(--erp-text)]"
+                  className="mt-2 truncate text-4xl leading-none text-[var(--erp-text)]"
                   style={{ fontFamily: theme.brandFontFamily }}
                 >
                   {theme.brandName}
                 </h3>
               </div>
-              <div className="mt-4 grid gap-3 sm:grid-cols-[160px_1fr]">
-                <div className="rounded-lg bg-[var(--erp-sidebar)] p-3">
+              <div className="mt-4 grid min-w-0 gap-3 sm:grid-cols-[160px_minmax(0,1fr)]">
+                <div className="min-w-0 rounded-lg bg-[var(--erp-sidebar)] p-3">
                   <div className="flex items-center gap-2 rounded-lg bg-[var(--erp-primary)] px-3 py-2 text-sm font-semibold text-[var(--erp-primary-text)]">
                     <BrandLogo className="size-8 rounded-md" iconClassName="size-4" theme={theme} />
                     <span>Caja</span>
@@ -10166,7 +12650,7 @@ function DisenoView({
                     Stock
                   </div>
                 </div>
-                <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] p-4">
+                <div className="min-w-0 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] p-4">
                   <p className="text-sm text-[var(--erp-muted)]">Panel principal</p>
                   <p className="mt-2 text-xl font-semibold text-[var(--erp-text)]">
                     Total vendido
@@ -10202,6 +12686,86 @@ function DisenoView({
   );
 }
 
+function DesktopUpdateButton({
+  onCheck,
+  onDownload,
+  onInstall,
+  update,
+}: {
+  onCheck: () => void;
+  onDownload: () => void;
+  onInstall: () => void;
+  update: DesktopUpdaterState;
+}) {
+  if (update.status === "unsupported" || update.status === "idle") {
+    return null;
+  }
+
+  if (update.status === "available") {
+    return (
+      <Button
+        className="border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+        onClick={onDownload}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <ArrowDownCircle className="size-4" />
+        Descargar {update.version ? `v${update.version}` : "actualización"}
+      </Button>
+    );
+  }
+
+  if (update.status === "downloaded") {
+    return (
+      <Button
+        className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+        onClick={onInstall}
+        size="sm"
+        type="button"
+      >
+        <CheckCircle2 className="size-4" />
+        Actualizar ahora
+      </Button>
+    );
+  }
+
+  if (update.status === "downloading") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-sm font-semibold text-cyan-100">
+        <ArrowDownCircle className="size-4" />
+        Descargando {update.progress ?? 0}%
+      </div>
+    );
+  }
+
+  if (update.status === "checking") {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-semibold text-zinc-100">
+        <RefreshCw className="size-4 animate-spin" />
+        Buscando actualización
+      </div>
+    );
+  }
+
+  if (update.status === "error") {
+    return (
+      <Button
+        className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+        onClick={onCheck}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <RefreshCw className="size-4" />
+        Reintentar actualización
+      </Button>
+    );
+  }
+
+  return null;
+}
+
 function DarkPanel({
   children,
   className,
@@ -10228,13 +12792,13 @@ function PanelHeader({
   title: string;
 }) {
   return (
-    <div className="flex flex-col gap-3 border-b border-[var(--erp-border)] p-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="erp-panel-header flex flex-col gap-3 border-b border-[var(--erp-border)] p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
         <div className="flex size-10 items-center justify-center rounded-lg bg-white/5 text-[var(--erp-primary)]">
           <Icon className="size-5" />
         </div>
         <div>
-          <h2 className="font-semibold text-[var(--erp-text)]">{title}</h2>
+          <h2 className="font-semibold leading-tight text-[var(--erp-text)]">{title}</h2>
           {subtitle && <p className="text-sm text-[var(--erp-muted)]">{subtitle}</p>}
         </div>
       </div>
@@ -10263,11 +12827,11 @@ function MetricCard({
   };
 
   return (
-    <div className="rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] p-3 shadow-2xl">
+    <div className="erp-metric-card rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] p-3 shadow-2xl">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs text-zinc-500">{label}</p>
-          <p className="mt-2 text-xl font-semibold tracking-normal text-zinc-100">
+          <p className="erp-metric-value mt-2 break-words text-xl font-semibold leading-tight tracking-normal text-zinc-100">
             {value}
           </p>
         </div>

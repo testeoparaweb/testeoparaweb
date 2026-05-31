@@ -10,6 +10,24 @@ export async function POST(request: Request) {
 
     const body = (await request.json()) as Record<string, unknown>;
     const supabase = createAdminClient();
+    const attendanceId =
+      typeof body.id === "string" && body.id.trim() ? body.id.trim() : null;
+
+    if (attendanceId) {
+      const { data: existingAttendance, error: existingError } = await supabase
+        .from("asistencias")
+        .select("id,empleado_id,empleado,tipo,turno,creado")
+        .eq("id", attendanceId)
+        .maybeSingle();
+
+      if (existingError) {
+        return NextResponse.json({ error: existingError.message }, { status: 500 });
+      }
+
+      if (existingAttendance) {
+        return NextResponse.json({ asistencia: existingAttendance, repetida: true });
+      }
+    }
 
     const { data, error } = await supabase
       .from("asistencias")

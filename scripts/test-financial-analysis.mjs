@@ -9,7 +9,19 @@ const startOfDay = (date) =>
 const endOfDay = (date) =>
   new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 23, 59, 59, 999));
 const addDays = (date, days) =>
-  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
+  new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+const getOperationalDayRange = (date) => {
+  const candidateStart = new Date(
+    Date.UTC(
+      date.getUTCFullYear(),
+      date.getUTCMonth(),
+      date.getUTCDate(),
+      SHIFT_DAY_START_HOUR,
+    ),
+  );
+  const start = date < candidateStart ? addDays(candidateStart, -1) : candidateStart;
+  return { start, end: new Date(addDays(start, 1).getTime() - 1) };
+};
 
 const normalizeExpenseCategory = (category) =>
   category
@@ -64,7 +76,10 @@ const calculateExpenseBreakdownBetween = (start, end, expenses, expenseHistory =
   return breakdown;
 };
 
-const getSaleHour = (sale) => Number(sale.time.split(":")[0] || 0);
+const getSaleHour = (sale) => {
+  const parsedHour = Number(sale.time.split(":")[0]);
+  return Number.isFinite(parsedHour) ? parsedHour : new Date(sale.createdAt).getUTCHours();
+};
 const saleMatchesShiftFilter = (sale, shiftFilter) => {
   if (shiftFilter === "todo") return true;
   const saleHour = getSaleHour(sale);
@@ -221,6 +236,22 @@ assert.equal(
   0,
   "los gastos de produccion manuales no deben descontarse de la ganancia",
 );
+assert.deepEqual(
+  getOperationalDayRange(new Date("2026-05-26T02:00:00.000Z")),
+  {
+    start: new Date("2026-05-25T06:00:00.000Z"),
+    end: new Date("2026-05-26T05:59:59.999Z"),
+  },
+  "a la madrugada el dia operativo debe seguir siendo el dia anterior",
+);
+assert.deepEqual(
+  getOperationalDayRange(new Date("2026-05-26T12:00:00.000Z")),
+  {
+    start: new Date("2026-05-26T06:00:00.000Z"),
+    end: new Date("2026-05-27T05:59:59.999Z"),
+  },
+  "despues de las 6 el dia operativo debe ser el dia actual",
+);
 
 const history = [
   {
@@ -239,16 +270,18 @@ assert.equal(
 );
 
 const sales = [
-  { id: "A", channel: "local", time: "10:00", total: 1000, items: 1, method: "Efectivo" },
-  { id: "B", channel: "local", time: "18:00", total: 2000, items: 2, method: "Tarjeta" },
-  { id: "C", channel: "pedidos_ya", time: "12:00", total: 1000, items: 1, method: "Mercado Pago" },
-  { id: "D", channel: "local", time: "02:00", total: 500, items: 1, method: "Efectivo" },
+  { id: "A", channel: "local", time: "10:00", total: 1000, items: 1, method: "Efectivo", createdAt: "2026-05-25T10:00:00.000Z" },
+  { id: "B", channel: "local", time: "18:00", total: 2000, items: 2, method: "Tarjeta", createdAt: "2026-05-25T18:00:00.000Z" },
+  { id: "C", channel: "pedidos_ya", time: "12:00", total: 1000, items: 1, method: "Mercado Pago", createdAt: "2026-05-25T12:00:00.000Z" },
+  { id: "D", channel: "local", time: "02:00", total: 500, items: 1, method: "Efectivo", createdAt: "2026-05-26T02:00:00.000Z" },
+  { id: "E", channel: "local", time: "--:--", total: 700, items: 1, method: "Efectivo", createdAt: "2026-05-25T19:00:00.000Z" },
 ];
 const saleItems = [
   { saleId: "A", product: "Cucurucho simple (Chocolate)", quantity: 1, price: 1000, total: 1000, cost: 300, flavors: ["Chocolate"] },
   { saleId: "B", product: "1 kg helado artesanal (Limon, Frutilla)", quantity: 2, price: 1000, total: 2000, cost: 800, flavors: ["Limon", "Frutilla"] },
   { saleId: "C", product: "Cucurucho simple (Chocolate)", quantity: 1, price: 1000, total: 1000, cost: 300, flavors: ["Chocolate"] },
   { saleId: "D", product: "Agua mineral", quantity: 1, price: 500, total: 500, cost: 200, flavors: [] },
+  { saleId: "E", product: "Cafe", quantity: 1, price: 700, total: 700, cost: 100, flavors: [] },
 ];
 const monthGrossRevenue = sales.reduce((total, sale) => total + sale.total, 0);
 const methodCommissions = { Tarjeta: 3, "Mercado Pago": 6 };
@@ -262,11 +295,11 @@ assert.deepEqual(summarizeAnalysis({
   saleItems,
   sales,
 }), {
-  grossRevenue: 4500,
-  soldProductCost: 2400,
+  grossRevenue: 5200,
+  soldProductCost: 2500,
   allocatedFixedExpenses: 300000,
   commissionCost: 240,
-  netProfit: -298140,
+  netProfit: -297540,
 });
 assert.deepEqual(summarizeAnalysis({
   fixedExpenses: 300000,
@@ -280,9 +313,9 @@ assert.deepEqual(summarizeAnalysis({
 }), {
   grossRevenue: 1000,
   soldProductCost: 300,
-  allocatedFixedExpenses: 300000 * (1000 / 4500),
+  allocatedFixedExpenses: 300000 * (1000 / 5200),
   commissionCost: 0,
-  netProfit: 1000 - 300 - 300000 * (1000 / 4500),
+  netProfit: 1000 - 300 - 300000 * (1000 / 5200),
 });
 assert.deepEqual(summarizeAnalysis({
   fixedExpenses: 300000,
@@ -294,22 +327,36 @@ assert.deepEqual(summarizeAnalysis({
   shiftFilter: "tarde",
   channelFilter: "local",
 }), {
-  grossRevenue: 2500,
-  soldProductCost: 1800,
-  allocatedFixedExpenses: 300000 * (2500 / 4500),
+  grossRevenue: 3200,
+  soldProductCost: 1900,
+  allocatedFixedExpenses: 300000 * (3200 / 5200),
   commissionCost: 60,
-  netProfit: 2500 - 1800 - 300000 * (2500 / 4500) - 60,
+  netProfit: 3200 - 1900 - 300000 * (3200 / 5200) - 60,
 });
 assert.deepEqual(topProducts(saleItems), [
   ["Cucurucho simple", 2],
   ["1 kg helado artesanal", 2],
   ["Agua mineral", 1],
+  ["Cafe", 1],
 ]);
 assert.deepEqual(topFlavors(saleItems), [
   ["Chocolate", 2],
   ["Limon", 2],
   ["Frutilla", 2],
 ]);
+{
+  const operationalDay = getOperationalDayRange(new Date("2026-05-26T02:00:00.000Z"));
+  assert.deepEqual(
+    sales
+      .filter((sale) => {
+        const createdAt = new Date(sale.createdAt);
+        return createdAt >= operationalDay.start && createdAt <= operationalDay.end;
+      })
+      .map((sale) => sale.id),
+    ["A", "B", "C", "D", "E"],
+    "el cierre de madrugada debe incluir ventas de la tarde anterior y de despues de medianoche",
+  );
+}
 
 assert.deepEqual(
   [
@@ -365,6 +412,7 @@ assert.deepEqual(productMargins(saleItems), [
   { product: "Cucurucho simple", quantity: 2, revenue: 2000, cost: 600, margin: 1400 },
   { product: "1 kg helado artesanal", quantity: 2, revenue: 2000, cost: 1600, margin: 400 },
   { product: "Agua mineral", quantity: 1, revenue: 500, cost: 200, margin: 300 },
+  { product: "Cafe", quantity: 1, revenue: 700, cost: 100, margin: 600 },
 ]);
 
 console.log("financial-analysis tests passed");

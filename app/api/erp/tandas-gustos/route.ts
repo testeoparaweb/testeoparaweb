@@ -11,6 +11,7 @@ export async function POST(request: Request) {
     const body = (await request.json()) as
       | {
           accion: "cargar";
+          id?: string;
           gusto_id: string;
           gusto: string;
           kilos: number;
@@ -27,8 +28,28 @@ export async function POST(request: Request) {
     const supabase = createAdminClient();
 
     if (body.accion === "cargar") {
+      if (body.id) {
+        const { data: existingBatch, error: existingError } = await supabase
+          .from("tandas_gustos")
+          .select("id")
+          .eq("id", body.id)
+          .maybeSingle();
+
+        if (existingError) {
+          return NextResponse.json(
+            { error: existingError.message },
+            { status: 500 },
+          );
+        }
+
+        if (existingBatch) {
+          return NextResponse.json({ ok: true, repetida: true });
+        }
+      }
+
       const [tanda, gusto] = await Promise.all([
         supabase.from("tandas_gustos").insert({
+          ...(body.id ? { id: body.id } : {}),
           gusto_id: body.gusto_id,
           gusto: body.gusto,
           kilos: body.kilos,

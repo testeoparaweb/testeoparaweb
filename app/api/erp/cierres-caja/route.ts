@@ -43,6 +43,7 @@ export async function POST(request: Request) {
     const permission = await requireRoles(["admin", "dueno", "empleado"]);
     if (!permission.ok) return permission.response;
     const body = (await request.json()) as {
+      id?: string;
       fecha_operativa?: string;
       turno?: string;
       total_sistema?: unknown;
@@ -57,9 +58,33 @@ export async function POST(request: Request) {
     }
 
     const supabase = createAdminClient();
+    const closeId =
+      typeof body.id === "string" && body.id.trim() ? body.id.trim() : null;
+
+    if (closeId) {
+      const { data: existingClose, error: existingError } = await supabase
+        .from("cierres_caja")
+        .select(closeSelect)
+        .eq("id", closeId)
+        .maybeSingle();
+
+      if (existingError) {
+        return NextResponse.json({ error: existingError.message }, { status: 500 });
+      }
+
+      if (existingClose) {
+        return NextResponse.json({
+          ok: true,
+          cierre: existingClose,
+          repetida: true,
+        });
+      }
+    }
+
     const efectivoSistema = toNumber(body.efectivo_sistema);
     const efectivoContado = toNumber(body.efectivo_contado);
     const cierre = {
+      ...(closeId ? { id: closeId } : {}),
       fecha_operativa:
         typeof body.fecha_operativa === "string" && body.fecha_operativa
           ? body.fecha_operativa

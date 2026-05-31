@@ -99,7 +99,7 @@ export function UserAdminModal({
 
   const deleteUser = async (user: ManagedUser) => {
     const confirmed = window.confirm(
-      `Eliminar el usuario ${user.name}? Esta accion no se puede deshacer.`,
+      `¿Eliminar el usuario ${user.name}? Esta acción no se puede deshacer.`,
     );
 
     if (!confirmed) return;
@@ -297,7 +297,7 @@ export function UserAdminModal({
                   type="button"
                   variant="outline"
                 >
-                  {editingUser ? "Cancelar edicion" : "Limpiar"}
+                  {editingUser ? "Cancelar edición" : "Limpiar"}
                 </Button>
                 <Button
                   className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
@@ -374,7 +374,7 @@ export function UserAdminModal({
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="flex items-center gap-2 text-sm text-zinc-500">
                           <Users className="size-4" />
-                          Ultimo ingreso: {formatDate(user.lastSignInAt)}
+                          Último ingreso: {formatDate(user.lastSignInAt)}
                         </div>
                         <Button
                           className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"

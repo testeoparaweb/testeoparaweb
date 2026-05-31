@@ -75,6 +75,371 @@
 }
 
 @layer utilities {
+  .erp-app-shell {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .erp-app-frame {
+    height: 100vh;
+    min-height: 0;
+  }
+
+  .erp-sidebar {
+    width: 15rem;
+    height: 100vh;
+    min-height: 0;
+  }
+
+  .erp-main {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .erp-content,
+  .erp-sidebar-nav {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--erp-border) 85%, var(--erp-primary)) transparent;
+  }
+
+  .erp-content::-webkit-scrollbar,
+  .erp-sidebar-nav::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .erp-content::-webkit-scrollbar-thumb,
+  .erp-sidebar-nav::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--erp-border) 85%, var(--erp-primary));
+  }
+
+  .erp-metric-value {
+    overflow-wrap: anywhere;
+  }
+
+  @media (min-width: 1536px) {
+    .erp-sidebar {
+      width: 18rem;
+    }
+  }
+
+  @media (max-width: 1366px), (max-height: 780px) {
+    .erp-sidebar-header,
+    .erp-sidebar-footer,
+    .erp-content,
+    .erp-panel-header {
+      padding: 0.75rem;
+    }
+
+    .erp-sidebar-nav {
+      gap: 0.75rem;
+      padding: 0.75rem;
+    }
+
+    .erp-nav-button {
+      padding-top: 0.55rem;
+      padding-bottom: 0.55rem;
+    }
+
+    .erp-topbar {
+      padding-top: 0.75rem;
+      padding-bottom: 0.75rem;
+    }
+
+    .erp-header-title {
+      font-size: 2.25rem;
+      line-height: 0.95;
+    }
+
+    .erp-sidebar-brand {
+      font-size: 1.35rem;
+    }
+
+    .erp-brand-logo {
+      width: 2.5rem;
+      height: 2.5rem;
+    }
+
+    .erp-metric-card {
+      padding: 0.75rem;
+    }
+
+    .erp-metric-value {
+      font-size: 1.1rem;
+    }
+  }
+
+  @media (max-width: 1280px), (max-height: 730px) {
+    .erp-sidebar {
+      width: 14rem;
+    }
+
+    .erp-topbar {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    .erp-content {
+      padding: 0.75rem;
+    }
+
+    .erp-header-title {
+      font-size: 2rem;
+    }
+
+    .erp-header-kicker {
+      font-size: 0.68rem;
+      letter-spacing: 0.18em;
+    }
+
+    .erp-header-actions {
+      gap: 0.4rem;
+    }
+
+    .erp-header-actions button,
+    .erp-header-actions a {
+      min-height: 2rem;
+      padding-left: 0.65rem;
+      padding-right: 0.65rem;
+    }
+  }
+
+  @media (max-width: 767px) {
+    body:has(.erp-app-shell) {
+      width: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior-y: contain;
+    }
+
+    input,
+    select,
+    textarea {
+      font-size: 16px;
+    }
+
+    .erp-app-shell,
+    .erp-app-frame {
+      min-height: 100dvh;
+      height: auto;
+      max-width: 100vw;
+      overflow-x: hidden;
+      overflow-y: visible;
+    }
+
+    .erp-main {
+      width: 100%;
+      max-width: 100vw;
+      min-height: 100dvh;
+      overflow: visible;
+    }
+
+    .erp-topbar {
+      padding: calc(0.65rem + env(safe-area-inset-top)) 0.75rem 0.65rem;
+      text-align: center;
+    }
+
+    .erp-header-title {
+      max-width: min(100%, calc(100vw - 1.5rem));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: clamp(1.75rem, 10vw, 2.35rem);
+      line-height: 0.95;
+    }
+
+    .erp-header-kicker {
+      max-width: min(100%, calc(100vw - 1.5rem));
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 0.65rem;
+      letter-spacing: 0.16em;
+    }
+
+    .erp-header-actions {
+      justify-content: center;
+      overflow-x: auto;
+      padding-bottom: 0.1rem;
+      scrollbar-width: none;
+    }
+
+    .erp-header-actions::-webkit-scrollbar,
+    .erp-mobile-top-nav::-webkit-scrollbar {
+      display: none;
+    }
+
+    .erp-header-actions > * {
+      flex: 0 0 auto;
+    }
+
+    .erp-mobile-top-nav {
+      display: flex;
+      justify-content: flex-start;
+      margin-right: -0.75rem;
+      margin-left: -0.75rem;
+      padding: 0.25rem 0.75rem 0.35rem;
+      border-top: 1px solid color-mix(in srgb, var(--erp-border) 55%, transparent);
+      border-bottom: 1px solid color-mix(in srgb, var(--erp-border) 75%, transparent);
+      scrollbar-width: none;
+    }
+
+    .erp-content {
+      padding: 0.75rem 0.75rem calc(1rem + env(safe-area-inset-bottom));
+      scroll-padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+      overflow: visible;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .erp-content,
+    .erp-content > *,
+    .erp-theme table {
+      max-width: 100%;
+    }
+
+    .erp-mobile-table-scroll {
+      width: 100%;
+      max-width: calc(100vw - 1.5rem);
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .erp-mobile-table-scroll table {
+      width: max-content;
+      min-width: 100%;
+    }
+
+    .erp-panel-header {
+      padding: 0.75rem;
+    }
+
+    .erp-panel-header > div:first-child {
+      min-width: 0;
+    }
+
+    .erp-category-grid,
+    .erp-product-grid,
+    .erp-flavor-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.55rem;
+    }
+
+    .erp-category-card {
+      min-height: 5.25rem;
+      gap: 0.65rem;
+      padding: 0.75rem;
+    }
+
+    .erp-category-card > div:first-child {
+      width: 2.6rem;
+      height: 2.6rem;
+    }
+
+    .erp-product-card {
+      min-height: 9.25rem;
+    }
+
+    .erp-product-card img,
+    .erp-product-card [role="img"] {
+      min-height: 5rem;
+    }
+
+    .erp-product-card p {
+      overflow-wrap: anywhere;
+    }
+
+    .erp-order-panel {
+      position: sticky;
+      bottom: calc(0.75rem + env(safe-area-inset-bottom));
+      z-index: 30;
+      max-height: min(72dvh, 34rem);
+      overflow: hidden;
+      box-shadow: 0 -18px 48px rgb(0 0 0 / 0.42);
+    }
+
+    .erp-order-panel > div:nth-child(2) {
+      max-height: 34dvh;
+      min-height: 7rem;
+      overflow-y: auto;
+    }
+
+    .erp-flavor-modal {
+      align-items: stretch;
+      padding: 0;
+    }
+
+    .erp-flavor-card {
+      display: flex;
+      height: 100dvh;
+      max-width: none;
+      flex-direction: column;
+      border-radius: 0;
+      border-right: 0;
+      border-left: 0;
+    }
+
+    .erp-flavor-card > .grid {
+      display: flex;
+      min-height: 0;
+      flex: 1;
+      flex-direction: column;
+    }
+
+    .erp-flavor-image {
+      min-height: 8.5rem;
+      max-height: 10.5rem;
+    }
+
+    .erp-flavor-body {
+      display: flex;
+      min-height: 0;
+      flex: 1;
+      flex-direction: column;
+      padding: 0.75rem;
+    }
+
+    .erp-flavor-list {
+      max-height: none;
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 0;
+    }
+
+    .erp-flavor-actions {
+      position: sticky;
+      bottom: 0;
+      margin-right: -0.75rem;
+      margin-left: -0.75rem;
+      padding: 0.75rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
+      background: var(--erp-panel);
+      border-top: 1px solid var(--erp-border);
+    }
+
+    .erp-metric-card {
+      padding: 0.7rem;
+    }
+
+    .erp-metric-value {
+      font-size: 1.05rem;
+    }
+
+    .erp-theme .space-y-5 > :not([hidden]) ~ :not([hidden]) {
+      margin-top: 0.75rem;
+    }
+  }
+
+  @media (max-width: 380px) {
+    .erp-category-grid,
+    .erp-product-grid,
+    .erp-flavor-grid {
+      grid-template-columns: 1fr;
+    }
+
+  }
+
   .erp-theme .text-cyan-100,
   .erp-theme .text-cyan-200,
   .erp-theme .text-cyan-300 {

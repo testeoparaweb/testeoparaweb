@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
+import { PwaRegister } from "@/components/pwa-register";
 import "./globals.css";
 
 const defaultUrl = process.env.VERCEL_URL
@@ -11,6 +12,18 @@ export const metadata: Metadata = {
   metadataBase: new URL(defaultUrl),
   title: "Sistema de gestión",
   description: "Sistema operativo para locales y comercios",
+  manifest: "/api/erp/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Heladeria",
+  },
+};
+
+export const viewport: Viewport = {
+  initialScale: 1,
+  themeColor: "#070809",
+  viewportFit: "cover",
+  width: "device-width",
 };
 
 const geistSans = Geist({
@@ -34,6 +47,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           {children}
+          <PwaRegister />
         </ThemeProvider>
       </body>
     </html>

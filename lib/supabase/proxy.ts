@@ -59,6 +59,8 @@ export async function updateSession(request: NextRequest) {
     pathname === "/auth/sign-up" || pathname === "/auth/sign-up-success";
   const isPublicApiRoute =
     pathname === "/api/auth/login" ||
+    pathname === "/api/erp/app-icon" ||
+    pathname === "/api/erp/manifest.webmanifest" ||
     (pathname === "/api/erp/diseno" && request.method === "GET");
   const isProtectedApiRoute =
     pathname.startsWith("/api/erp") ||

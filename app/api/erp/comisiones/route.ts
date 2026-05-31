@@ -44,6 +44,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    const snapshot = await supabase.from("comisiones_historial").insert({
+      fecha_desde: new Date().toISOString(),
+      canales: body.canales ?? { local: 0, pedidos_ya: 0 },
+      metodos: body.metodos ?? [],
+    });
+
+    if (
+      snapshot.error &&
+      snapshot.error.code !== "42P01" &&
+      snapshot.error.code !== "PGRST205"
+    ) {
+      return NextResponse.json({ error: snapshot.error.message }, { status: 500 });
+    }
+
     await supabase.from("auditoria").insert({
       accion: "actualizar",
       entidad: "comisiones",

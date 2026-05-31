@@ -18,6 +18,7 @@ export async function GET() {
       itemsVenta,
       gastos,
       gastosHistorial,
+      comisionesHistorial,
       tandasGustos,
       empleados,
       asistencias,
@@ -60,6 +61,11 @@ export async function GET() {
       supabase
         .from("gastos_historial")
         .select("id,fecha_desde,total,gastos,creado")
+        .order("fecha_desde", { ascending: true })
+        .limit(1000),
+      supabase
+        .from("comisiones_historial")
+        .select("id,fecha_desde,canales,metodos,creado")
         .order("fecha_desde", { ascending: true })
         .limit(1000),
       supabase
@@ -128,6 +134,11 @@ export async function GET() {
       gastosHistorial.error?.code === "PGRST205"
         ? null
         : gastosHistorial.error;
+    const comisionesHistorialError =
+      comisionesHistorial.error?.code === "42P01" ||
+      comisionesHistorial.error?.code === "PGRST205"
+        ? null
+        : comisionesHistorial.error;
 
     const tandasError =
       tandasGustos.error?.code === "42P01" ||
@@ -157,6 +168,7 @@ export async function GET() {
       itemsVenta.error ||
       gastos.error ||
       historialError ||
+      comisionesHistorialError ||
       tandasError ||
       disenoError ||
       comisionesError ||
@@ -176,6 +188,7 @@ export async function GET() {
       items_venta: itemsVenta.data ?? [],
       gastos: gastos.data ?? [],
       gastos_historial: gastosHistorial.error ? [] : gastosHistorial.data ?? [],
+      comisiones_historial: comisionesHistorial.error ? [] : comisionesHistorial.data ?? [],
       tandas_gustos: tandasGustos.error ? [] : tandasGustos.data ?? [],
       empleados: empleados.data ?? [],
       asistencias: asistencias.data ?? [],
