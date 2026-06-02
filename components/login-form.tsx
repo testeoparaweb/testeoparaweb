@@ -11,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 const translateLoginError = (message: string) => {
@@ -47,7 +46,6 @@ export function LoginForm({
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -81,7 +79,7 @@ export function LoginForm({
         password,
       });
       if (error) throw error;
-      router.push("/");
+      window.location.assign("/");
     } catch (error: unknown) {
       setError(
         error instanceof Error

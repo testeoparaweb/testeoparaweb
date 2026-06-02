@@ -25,6 +25,7 @@ export type OfflineSaleRecord = {
   saleItems: Array<{
     id: string;
     saleId: string;
+    productId: string | null;
     product: string;
     quantity: number;
     price: number;

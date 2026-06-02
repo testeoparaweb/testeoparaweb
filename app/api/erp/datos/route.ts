@@ -50,7 +50,7 @@ export async function GET() {
         .range(0, 9999),
       supabase
         .from("items_venta")
-        .select("id,venta_id,producto,cantidad,precio,costo,total,gustos,creado")
+        .select("id,venta_id,producto_id,producto,cantidad,precio,costo,total,gustos,creado")
         .order("creado", { ascending: false })
         .range(0, 9999),
       supabase

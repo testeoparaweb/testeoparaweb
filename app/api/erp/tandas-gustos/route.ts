@@ -24,6 +24,16 @@ export async function POST(request: Request) {
           tanda_id: string;
           gusto_id: string;
           stock_actual: number;
+        }
+      | {
+          accion: "eliminar";
+          tanda_id: string;
+          gusto_id: string;
+        }
+      | {
+          accion: "reabrir";
+          tanda_id: string;
+          gusto_id: string;
         };
     const supabase = createAdminClient();
 
@@ -60,6 +70,42 @@ export async function POST(request: Request) {
           .from("gustos")
           .update({ stock: body.stock_actual + body.porciones_cargadas })
           .eq("id", body.gusto_id),
+      ]);
+
+      const error = tanda.error || gusto.error;
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.accion === "eliminar") {
+      const [tanda, gusto] = await Promise.all([
+        supabase.from("tandas_gustos").delete().eq("id", body.tanda_id),
+        supabase.from("gustos").update({ stock: 0 }).eq("id", body.gusto_id),
+      ]);
+
+      const error = tanda.error || gusto.error;
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      return NextResponse.json({ ok: true });
+    }
+
+    if (body.accion === "reabrir") {
+      const [tanda, gusto] = await Promise.all([
+        supabase
+          .from("tandas_gustos")
+          .update({
+            estado: "activa",
+            cerrado: null,
+            stock_sistema_al_cerrar: null,
+            rendimiento_sugerido: null,
+          })
+          .eq("id", body.tanda_id),
+        supabase.from("gustos").update({ stock: 1 }).eq("id", body.gusto_id),
       ]);
 
       const error = tanda.error || gusto.error;
