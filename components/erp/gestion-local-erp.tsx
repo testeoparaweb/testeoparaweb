@@ -6525,7 +6525,7 @@ function CajaView({
                     className={cn(
                       "rounded-lg border px-3 py-2 text-xs font-semibold transition",
                       paymentMethod === method
-                        ? "border-emerald-300 bg-emerald-300 text-zinc-950"
+                        ? "border-[var(--erp-primary-border)] bg-[var(--erp-primary)] text-[var(--erp-primary-text)]"
                         : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
                     )}
                     key={method}
@@ -9586,7 +9586,7 @@ function FinanzasView({
           <PanelHeader
             right={
               <Button
-                className="h-10 bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                className="h-10 bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
                 onClick={() => setIsExpensesPopupOpen(true)}
                 type="button"
               >
@@ -9677,7 +9677,7 @@ function FinanzasView({
               Cerrar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={() => {
                 saveExpenses(editableExpenseItems);
                 setIsExpensesPopupOpen(false);
@@ -12413,7 +12413,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={async () => {
                 const saved = await saveProduct(newProduct);
                 if (saved) closeProductForm();
@@ -12447,7 +12447,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={saveEditProductModal}
               type="button"
             >
@@ -12485,7 +12485,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={createFlavorOnly}
               type="button"
             >
@@ -12516,7 +12516,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={saveEditFlavorModal}
               type="button"
             >
@@ -12565,7 +12565,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={async () => {
                 const saved = await loadFlavorBatch(
                   batchFlavor,
@@ -12652,7 +12652,7 @@ function StockView({
                   Cancelar
                 </Button>
                 <Button
-                  className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                  className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
                   disabled={quickStockIncrement <= 0 || isQuickStockSaving}
                   onClick={confirmQuickStock}
                   type="button"
@@ -13747,7 +13747,7 @@ function DesktopUpdateButton({
   if (update.status === "downloaded") {
     return (
       <Button
-        className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+        className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
         onClick={onInstall}
         size="sm"
         type="button"
