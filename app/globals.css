@@ -310,6 +310,7 @@
     }
 
     .erp-connection-status,
+    .erp-desktop-download-action,
     .erp-desktop-update-action {
       display: none;
     }
