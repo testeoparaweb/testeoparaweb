@@ -9,6 +9,19 @@ export async function GET() {
     if (!permission.ok) return permission.response;
 
     const supabase = createAdminClient();
+    const canSeeManagementData =
+      permission.user.role === "admin" || permission.user.role === "dueno";
+    const productSelect = canSeeManagementData
+      ? "id,nombre,categoria,precio,costo,stock,stock_minimo,unidad,imagen,max_gustos,consumo_gustos"
+      : "id,nombre,categoria,precio,stock,stock_minimo,unidad,imagen,max_gustos,consumo_gustos";
+    const paymentMethodSelect = canSeeManagementData
+      ? "nombre,comision"
+      : "nombre";
+    const saleItemSelect = canSeeManagementData
+      ? "id,venta_id,producto_id,producto,cantidad,precio,costo,total,gustos,creado"
+      : "id,venta_id,producto_id,producto,cantidad,precio,total,gustos,creado";
+    const emptyRows = Promise.resolve({ data: [], error: null });
+    const emptyConfig = Promise.resolve({ data: null, error: null });
 
     const [
       productos,
@@ -28,7 +41,7 @@ export async function GET() {
     ] = await Promise.all([
       supabase
         .from("productos")
-        .select("id,nombre,categoria,precio,costo,stock,stock_minimo,unidad,imagen,max_gustos,consumo_gustos")
+        .select(productSelect)
         .eq("activo", true)
         .order("categoria", { ascending: true })
         .order("nombre", { ascending: true }),
@@ -40,7 +53,7 @@ export async function GET() {
         .order("nombre", { ascending: true }),
       supabase
         .from("metodos_pago")
-        .select("nombre,comision")
+        .select(paymentMethodSelect)
         .eq("activo", true)
         .order("nombre", { ascending: true }),
       supabase
@@ -50,24 +63,30 @@ export async function GET() {
         .range(0, 9999),
       supabase
         .from("items_venta")
-        .select("id,venta_id,producto_id,producto,cantidad,precio,costo,total,gustos,creado")
+        .select(saleItemSelect)
         .order("creado", { ascending: false })
         .range(0, 9999),
-      supabase
-        .from("gastos")
-        .select("clave,nombre,categoria,monto")
-        .eq("activo", true)
-        .order("orden", { ascending: true }),
-      supabase
-        .from("gastos_historial")
-        .select("id,fecha_desde,total,gastos,creado")
-        .order("fecha_desde", { ascending: true })
-        .limit(1000),
-      supabase
-        .from("comisiones_historial")
-        .select("id,fecha_desde,canales,metodos,creado")
-        .order("fecha_desde", { ascending: true })
-        .limit(1000),
+      canSeeManagementData
+        ? supabase
+            .from("gastos")
+            .select("clave,nombre,categoria,monto")
+            .eq("activo", true)
+            .order("orden", { ascending: true })
+        : emptyRows,
+      canSeeManagementData
+        ? supabase
+            .from("gastos_historial")
+            .select("id,fecha_desde,total,gastos,creado")
+            .order("fecha_desde", { ascending: true })
+            .limit(1000)
+        : emptyRows,
+      canSeeManagementData
+        ? supabase
+            .from("comisiones_historial")
+            .select("id,fecha_desde,canales,metodos,creado")
+            .order("fecha_desde", { ascending: true })
+            .limit(1000)
+        : emptyRows,
       supabase
         .from("tandas_gustos")
         .select("id,gusto_id,gusto,kilos,porciones_cargadas,stock_sistema_al_cerrar,rendimiento_sugerido,estado,creado,cerrado")
@@ -88,16 +107,20 @@ export async function GET() {
         .select("valor")
         .eq("clave", "diseno")
         .maybeSingle(),
-      supabase
-        .from("configuracion")
-        .select("valor")
-        .eq("clave", "comisiones_canales")
-        .maybeSingle(),
-      supabase
-        .from("auditoria")
-        .select("id,entidad,entidad_id,accion,detalle,usuario_nombre,creado")
-        .order("creado", { ascending: false })
-        .limit(50),
+      canSeeManagementData
+        ? supabase
+            .from("configuracion")
+            .select("valor")
+            .eq("clave", "comisiones_canales")
+            .maybeSingle()
+        : emptyConfig,
+      canSeeManagementData
+        ? supabase
+            .from("auditoria")
+            .select("id,entidad,entidad_id,accion,detalle,usuario_nombre,creado")
+            .order("creado", { ascending: false })
+            .limit(50)
+        : emptyRows,
     ]);
 
     const gustos =
