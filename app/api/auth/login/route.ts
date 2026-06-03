@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { findAuthUserByUsernameOrEmail } from "@/lib/auth/admin-users";
+import {
+  getUserName,
+  getUserRole,
+  getUserUsername,
+  isAdminEmail,
+} from "@/lib/auth/user";
+import { createClient } from "@/lib/supabase/server";
 
 export async function POST(request: Request) {
   try {
@@ -19,16 +26,38 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await findAuthUserByUsernameOrEmail(usuario);
+    const authUser = await findAuthUserByUsernameOrEmail(usuario);
 
-    if (!user?.email) {
+    if (!authUser?.email) {
       return NextResponse.json(
         { error: "Usuario o contraseña incorrectos" },
         { status: 401 },
       );
     }
 
-    return NextResponse.json({ email: user.email });
+    const supabase = await createClient();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: authUser.email,
+      password,
+    });
+
+    if (error || !data.user) {
+      return NextResponse.json(
+        { error: "Usuario o contraseña incorrectos" },
+        { status: 401 },
+      );
+    }
+
+    return NextResponse.json({
+      usuario: {
+        id: data.user.id,
+        email: data.user.email ?? null,
+        username: getUserUsername(data.user),
+        name: getUserName(data.user),
+        isAdmin: isAdminEmail(data.user.email),
+        role: getUserRole(data.user),
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Error desconocido" },

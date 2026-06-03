@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, ShieldPlus, Trash2, Users } from "lucide-react";
+import { Pencil, ShieldPlus, Trash2, Users, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -140,33 +140,35 @@ export function UserAdminModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
-        <div className="flex flex-col gap-3 border-b border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-lg bg-cyan-300/10 text-cyan-100">
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+      <div className="flex h-dvh w-full max-w-4xl flex-col overflow-hidden rounded-none border border-white/10 bg-[#101315] shadow-2xl sm:h-auto sm:max-h-[92dvh] sm:rounded-lg">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 p-3 sm:p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-300/10 text-cyan-100 sm:size-10">
               <ShieldPlus className="size-5" />
             </div>
-            <div>
+            <div className="min-w-0">
               <h2 className="font-semibold text-zinc-100">Usuarios del sistema</h2>
-              <p className="text-sm text-zinc-500">
+              <p className="text-xs text-zinc-500 sm:text-sm">
                 Admin y dueño pueden crear y editar accesos
               </p>
             </div>
           </div>
           <Button
-            className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+            aria-label="Cerrar usuarios"
+            className="shrink-0 border-white/10 bg-white/5 px-2 text-zinc-100 hover:bg-white/10 sm:px-3"
             onClick={onClose}
             size="sm"
             type="button"
             variant="outline"
           >
-            Cerrar
+            <X className="size-4" />
+            <span className="hidden sm:inline">Cerrar</span>
           </Button>
         </div>
 
-        <div className="grid gap-4 p-4 xl:grid-cols-[360px_1fr]">
-          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+        <div className="grid min-h-0 flex-1 gap-3 overflow-y-auto p-3 sm:gap-4 sm:p-4 xl:grid-cols-[360px_1fr]">
+          <div className="rounded-lg border border-white/10 bg-black/20 p-3 sm:p-4">
             <div className="mb-4">
               <p className="font-semibold text-zinc-100">
                 {editingUser ? "Editar usuario" : "Crear usuario"}
@@ -287,9 +289,9 @@ export function UserAdminModal({
 
               {notice && <p className="text-sm text-zinc-300">{notice}</p>}
 
-              <div className="flex flex-wrap justify-end gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
                 <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                   onClick={() => {
                     resetForm();
                     setNotice(null);
@@ -300,7 +302,7 @@ export function UserAdminModal({
                   {editingUser ? "Cancelar edición" : "Limpiar"}
                 </Button>
                 <Button
-                  className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                  className="w-full bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200 sm:w-auto"
                   disabled={isSaving}
                   type="submit"
                 >
@@ -314,8 +316,8 @@ export function UserAdminModal({
             </form>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="rounded-lg border border-white/10 bg-black/20 p-3 sm:p-4">
+            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-semibold text-zinc-100">Usuarios cargados</p>
                 <p className="mt-1 text-sm text-zinc-500">
@@ -323,7 +325,7 @@ export function UserAdminModal({
                 </p>
               </div>
               <Button
-                className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                 onClick={loadUsers}
                 size="sm"
                 type="button"
@@ -345,13 +347,13 @@ export function UserAdminModal({
               <div className="space-y-3">
                 {users.map((user) => (
                   <div
-                    className="rounded-lg border border-white/10 bg-[#0f1213] p-4"
+                    className="rounded-lg border border-white/10 bg-[#0f1213] p-3 sm:p-4"
                     key={user.id}
                   >
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0">
+                      <div className="min-w-0 space-y-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold text-zinc-100">
+                          <p className="min-w-0 break-words font-semibold text-zinc-100">
                             {user.name}
                           </p>
                           <Badge className="border-white/10 bg-white/5 text-zinc-300 hover:bg-white/5">
@@ -369,15 +371,17 @@ export function UserAdminModal({
                             {roleLabels[user.role]}
                           </Badge>
                         </div>
-                        <p className="mt-1 text-sm text-zinc-400">{user.email}</p>
+                        <p className="break-all text-sm text-zinc-400">{user.email}</p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="flex items-center gap-2 text-sm text-zinc-500">
-                          <Users className="size-4" />
-                          Último ingreso: {formatDate(user.lastSignInAt)}
+                      <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center">
+                        <div className="col-span-2 flex min-w-0 items-start gap-2 text-xs text-zinc-500 sm:text-sm">
+                          <Users className="mt-0.5 size-4 shrink-0" />
+                          <span className="min-w-0 break-words">
+                            Último ingreso: {formatDate(user.lastSignInAt)}
+                          </span>
                         </div>
                         <Button
-                          className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                          className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                           onClick={() => startEditing(user)}
                           size="sm"
                           type="button"
@@ -387,7 +391,7 @@ export function UserAdminModal({
                           Editar
                         </Button>
                         <Button
-                          className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
+                          className="w-full border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20 sm:w-auto"
                           disabled={user.isAdmin || isDeletingUserId === user.id}
                           onClick={() => deleteUser(user)}
                           size="sm"

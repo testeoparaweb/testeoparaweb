@@ -414,6 +414,7 @@ type CashCloseRow = {
 type NavItem = {
   id: ViewId;
   label: string;
+  mobileLabel?: string;
   icon: LucideIcon;
 };
 
@@ -424,7 +425,7 @@ type ProductRow = {
   nombre: string;
   categoria: string;
   precio: NumericValue;
-  costo: NumericValue;
+  costo?: NumericValue;
   stock: NumericValue;
   stock_minimo: NumericValue;
   unidad: string;
@@ -469,7 +470,7 @@ type SaleItemRow = {
   producto: string;
   cantidad: NumericValue;
   precio?: NumericValue;
-  costo: NumericValue;
+  costo?: NumericValue;
   total?: NumericValue;
   gustos: string[] | null;
   creado: string | null;
@@ -580,7 +581,9 @@ const SHIFT_CHANGE_HOUR = 16;
 const ARGENTINA_TIMEZONE = "America/Argentina/Buenos_Aires";
 const ARGENTINA_OFFSET = "-03:00";
 const THEME_STORAGE_KEY = "gestion-local.diseno";
-const OFFLINE_DATA_STORAGE_KEY = "gestion-local.ultimo-dato";
+const OFFLINE_DATA_STORAGE_KEY_PREFIX = "gestion-local.ultimo-dato";
+const getOfflineDataStorageKey = (user: SessionUser) =>
+  `${OFFLINE_DATA_STORAGE_KEY_PREFIX}.${user.id}.${user.role}`;
 const DEFAULT_FONT_FAMILY =
   "var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
 const BRAND_FONT_FAMILY = "'Great Vibes', 'Dancing Script', cursive";
@@ -612,14 +615,14 @@ const DEFAULT_BRAND_SUBTITLE = "Gestión del local";
 
 const navItems: NavItem[] = [
   { id: "caja", label: "Caja", icon: ShoppingCart },
-  { id: "cierre-caja", label: "Cierre de caja", icon: DollarSign },
+  { id: "cierre-caja", label: "Cierre de caja", mobileLabel: "Cierre", icon: DollarSign },
   { id: "stock", label: "Stock", icon: Package },
   { id: "ventas", label: "Ventas", icon: ReceiptText },
-  { id: "historial", label: "Ventas por período", icon: CalendarClock },
-  { id: "analisis", label: "Análisis ventas", icon: BarChart3 },
-  { id: "finanzas", label: "Gastos y comisiones", icon: WalletCards },
+  { id: "historial", label: "Ventas por período", mobileLabel: "Hist. ventas", icon: CalendarClock },
+  { id: "analisis", label: "Análisis ventas", mobileLabel: "Análisis", icon: BarChart3 },
+  { id: "finanzas", label: "Gastos y comisiones", mobileLabel: "Gastos", icon: WalletCards },
   { id: "empleados", label: "Empleados", icon: Users },
-  { id: "historial-empleados", label: "Historial empleados", icon: CalendarClock },
+  { id: "historial-empleados", label: "Historial empleados", mobileLabel: "Hist. empleados", icon: CalendarClock },
   { id: "auditoria", label: "Auditoría", icon: ReceiptText },
   { id: "diseno", label: "Diseño", icon: Palette },
 ];
@@ -3045,7 +3048,7 @@ const mapProduct = (product: ProductRow): Product => ({
   name: product.nombre,
   category: product.categoria,
   price: toNumber(product.precio),
-  cost: toNumber(product.costo),
+  cost: toNumber(product.costo ?? 0),
   stock: toNumber(product.stock),
   minStock: toNumber(product.stock_minimo),
   unit: product.unidad,
@@ -3085,7 +3088,7 @@ const mapSaleItem = (item: SaleItemRow): SaleItem => ({
   product: item.producto,
   quantity: toNumber(item.cantidad),
   price: toNumber(item.precio ?? null),
-  cost: toNumber(item.costo),
+  cost: toNumber(item.costo ?? 0),
   total: toNumber(item.total ?? null),
   flavors: item.gustos ?? [],
   createdAt: item.creado ?? new Date().toISOString(),
@@ -3274,6 +3277,11 @@ export function GestionLocalErp() {
   const allowedViews = sessionUser
     ? allowedViewsByRole[sessionUser.role]
     : allowedViewsByRole.empleado;
+  const safeActiveView = allowedViews.includes(activeView)
+    ? activeView
+    : allowedViews[0] ?? "caja";
+  const canManageBusiness =
+    sessionUser?.role === "admin" || sessionUser?.role === "dueno";
   const visibleNavItems = navItems.filter((item) => allowedViews.includes(item.id));
   const helpGuideGroups = navGroups
     .map((group) => ({
@@ -3357,8 +3365,12 @@ export function GestionLocalErp() {
     );
   };
 
-  const loadData = async (successNotice = "Datos conectados con Supabase") => {
+  const loadData = async (
+    successNotice = "Datos conectados con Supabase",
+    user = sessionUser,
+  ) => {
     setIsLoadingData(true);
+    const offlineDataStorageKey = user ? getOfflineDataStorageKey(user) : null;
 
     const response = await fetch("/api/erp/datos", { cache: "no-store" }).catch(
       () => null,
@@ -3367,14 +3379,18 @@ export function GestionLocalErp() {
     if (!response?.ok) {
       setIsSupabaseReady(false);
       setIsLoadingData(false);
-      const cached = window.localStorage.getItem(OFFLINE_DATA_STORAGE_KEY);
+      const cached = offlineDataStorageKey
+        ? window.localStorage.getItem(offlineDataStorageKey)
+        : null;
       if (cached) {
         try {
           applyErpData(JSON.parse(cached) as ErpDataResponse);
           setNotice("Sin internet: usando los últimos datos guardados en esta PC");
           return true;
         } catch {
-          window.localStorage.removeItem(OFFLINE_DATA_STORAGE_KEY);
+          if (offlineDataStorageKey) {
+            window.localStorage.removeItem(offlineDataStorageKey);
+          }
         }
       }
       setNotice("No se pudo cargar la base de datos");
@@ -3383,7 +3399,10 @@ export function GestionLocalErp() {
 
     const data = (await response.json()) as ErpDataResponse;
     applyErpData(data);
-    window.localStorage.setItem(OFFLINE_DATA_STORAGE_KEY, JSON.stringify(data));
+    if (offlineDataStorageKey) {
+      window.localStorage.setItem(offlineDataStorageKey, JSON.stringify(data));
+    }
+    window.localStorage.removeItem(OFFLINE_DATA_STORAGE_KEY_PREFIX);
     setIsSupabaseReady(true);
     setIsLoadingData(false);
     setNotice(successNotice);
@@ -3397,11 +3416,12 @@ export function GestionLocalErp() {
 
     if (!response?.ok) {
       setSessionUser(null);
-      return;
+      return null;
     }
 
     const data = (await response.json()) as SessionUser;
     setSessionUser(data);
+    return data;
   };
 
   const updateThemeDraft = (key: keyof ThemeSettings, value: string) => {
@@ -3494,7 +3514,12 @@ export function GestionLocalErp() {
       }
 
       try {
-        await Promise.all([loadData(), loadSessionUser()]);
+        const user = await loadSessionUser();
+        if (user) {
+          await loadData("Datos conectados con Supabase", user);
+        } else {
+          setIsLoadingData(false);
+        }
       } finally {
         if (isMounted) {
           setIsBooting(false);
@@ -4989,14 +5014,13 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                     {groupItems.map((item) => (
                       <NavButton
                         key={item.id}
-                        active={activeView === item.id}
+                        active={safeActiveView === item.id}
                         item={item}
                         onClick={() => setActiveView(item.id)}
                       />
                     ))}
                     {group.label === "Sistema" &&
-                      (sessionUser?.role === "admin" ||
-                        sessionUser?.role === "dueno") && (
+                      canManageBusiness && (
                         <button
                           className="erp-nav-button flex w-full items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold text-[var(--erp-muted)] transition hover:bg-white/5 hover:text-[var(--erp-text)]"
                           onClick={() => setIsUsersOpen(true)}
@@ -5024,8 +5048,8 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
 
         <main className="erp-main min-w-0 flex-1">
           <header className="erp-topbar z-20 shrink-0 border-b border-[var(--erp-border)] bg-[var(--erp-header)] px-4 py-4 backdrop-blur md:px-6">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div>
+            <div className="erp-topbar-inner flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="erp-header-brand min-w-0">
                 <p className="erp-header-kicker text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">
                   {themeSettings.brandSubtitle}
                 </p>
@@ -5042,7 +5066,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                   <>
                     <div
                       className={cn(
-                        "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold",
+                        "erp-connection-status flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold",
                         isOnline
                           ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"
                           : "border-amber-300/30 bg-amber-300/10 text-amber-100",
@@ -5062,12 +5086,14 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                         </span>
                       )}
                     </div>
-                    <DesktopUpdateButton
-                      onCheck={checkDesktopUpdate}
-                      onDownload={downloadDesktopUpdate}
-                      onInstall={installDesktopUpdate}
-                      update={desktopUpdate}
-                    />
+                    <div className="erp-desktop-update-action">
+                      <DesktopUpdateButton
+                        onCheck={checkDesktopUpdate}
+                        onDownload={downloadDesktopUpdate}
+                        onInstall={installDesktopUpdate}
+                        update={desktopUpdate}
+                      />
+                    </div>
                     <Button
                       className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                       onClick={() => setIsHelpOpen(true)}
@@ -5107,21 +5133,32 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               {visibleNavItems.map((item) => (
                 <NavButton
                   key={item.id}
-                  active={activeView === item.id}
+                  active={safeActiveView === item.id}
                   compact
                   item={item}
                   onClick={() => setActiveView(item.id)}
                 />
               ))}
+              {canManageBusiness ? (
+                <button
+                  className="erp-nav-button flex shrink-0 items-center gap-3 rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel-alt)] px-3 py-3 text-sm font-semibold text-[var(--erp-muted)] transition hover:bg-white/5 hover:text-[var(--erp-text)]"
+                  onClick={() => setIsUsersOpen(true)}
+                  type="button"
+                >
+                  <Users className="size-4" />
+                  Usuarios
+                </button>
+              ) : null}
             </div>
           </header>
 
           <section className="erp-content min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-6">
-            {activeView === "caja" && (
+            {safeActiveView === "caja" && (
               <CajaView
                 cartItems={cartItems}
                 category={category}
                 categories={categories}
+                canSeeFinancialDetails={canManageBusiness}
                 channelCommissions={channelCommissions}
                 clearFromCart={clearFromCart}
                 completeSale={completeSale}
@@ -5160,22 +5197,23 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "cierre-caja" && (
+            {safeActiveView === "cierre-caja" && (
               <CierreCajaView
                 onOfflineQueueChange={refreshOfflineSaleCount}
                 sales={sales}
               />
             )}
 
-            {activeView === "ventas" && (
+            {safeActiveView === "ventas" && (
               <HistorialVentasView
+                canDeleteSales={canManageBusiness}
                 deleteSale={deleteSale}
                 saleItems={saleItems}
                 sales={sales}
               />
             )}
 
-            {activeView === "analisis" && (
+            {safeActiveView === "analisis" && (
               <AnalisisView
                 channelCommissions={channelCommissions}
                 commissionHistory={commissionHistory}
@@ -5189,7 +5227,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "historial" && (
+            {safeActiveView === "historial" && (
               <HistorialView
                 channelCommissions={channelCommissions}
                 commissionHistory={commissionHistory}
@@ -5201,7 +5239,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "finanzas" && (
+            {safeActiveView === "finanzas" && (
               <FinanzasView
                 expenses={expenses}
                 expenseHistory={expenseHistory}
@@ -5220,7 +5258,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "empleados" && (
+            {safeActiveView === "empleados" && (
               <EmpleadosView
                 attendance={attendance}
                 attendanceStatusMap={attendanceStatusMap}
@@ -5230,7 +5268,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "historial-empleados" && (
+            {safeActiveView === "historial-empleados" && (
               <HistorialEmpleadosView
                 attendance={attendance}
                 saveAttendanceRecord={saveAttendanceRecord}
@@ -5239,11 +5277,9 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "stock" && (
+            {safeActiveView === "stock" && (
               <StockView
-                canManageStock={
-                  sessionUser?.role === "admin" || sessionUser?.role === "dueno"
-                }
+                canManageStock={canManageBusiness}
                 closeFlavorBatch={closeFlavorBatch}
                 deleteFlavorBatch={deleteFlavorBatch}
                 deleteFlavor={deleteFlavor}
@@ -5260,7 +5296,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "diseno" && sessionUser?.role === "admin" && (
+            {safeActiveView === "diseno" && sessionUser?.role === "admin" && (
               <DisenoView
                 isSaving={isSavingTheme}
                 onApplyPreset={applyThemePreset}
@@ -5271,13 +5307,13 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
               />
             )}
 
-            {activeView === "auditoria" && (
+            {safeActiveView === "auditoria" && (
               <AuditoriaView auditLogs={auditLogs} />
             )}
           </section>
 
           <HelpModal
-            activeView={activeView}
+            activeView={safeActiveView}
             groups={helpGuideGroups}
             isOpen={isHelpOpen}
             onClose={() => setIsHelpOpen(false)}
@@ -5347,18 +5383,21 @@ function NavButton({
 
   return (
     <button
+      aria-current={active ? "page" : undefined}
+      data-active={active ? "true" : undefined}
       className={cn(
         "erp-nav-button flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold transition",
+        compact && "shrink-0 border",
         active
-          ? "bg-[var(--erp-primary)] text-[var(--erp-primary-text)] shadow-[0_0_24px_var(--erp-primary-soft)]"
-          : "text-[var(--erp-muted)] hover:bg-white/5 hover:text-[var(--erp-text)]",
-        compact && "shrink-0 border border-[var(--erp-border)] bg-[var(--erp-panel-alt)]",
+          ? "border-[var(--erp-primary)] bg-[var(--erp-primary)] text-[var(--erp-primary-text)] shadow-[0_0_24px_var(--erp-primary-soft)]"
+          : "border-[var(--erp-border)] text-[var(--erp-muted)] hover:bg-white/5 hover:text-[var(--erp-text)]",
+        compact && !active && "bg-[var(--erp-panel-alt)]",
       )}
       onClick={onClick}
       type="button"
     >
       <Icon className="size-4" />
-      {item.label}
+      {compact ? item.mobileLabel ?? item.label : item.label}
     </button>
   );
 }
@@ -5416,8 +5455,8 @@ export function CashierSelectionModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-4xl rounded-2xl border border-white/10 bg-[#0d0f10] shadow-2xl">
+    <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="erp-modal-panel w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0d0f10] shadow-2xl">
         <div className="border-b border-white/10 px-5 py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -5441,7 +5480,7 @@ export function CashierSelectionModal({
           </div>
         </div>
 
-        <div className="space-y-4 p-5">
+        <div className="max-h-[calc(100dvh-13rem)] space-y-4 overflow-y-auto p-5">
           <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
             Buscar empleado
             <div className="mt-2 flex items-center gap-3 rounded-xl border border-white/10 bg-[#080a0c] px-3">
@@ -5519,13 +5558,13 @@ export function CashierSelectionModal({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4">
+        <div className="flex flex-col gap-3 border-t border-white/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-zinc-500">
             {selectedStaff
               ? `La caja quedara asociada a ${selectedStaff.name}.`
               : "Elegi un empleado para seguir."}
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
             {canSkip && (
               <Button
                 className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
@@ -5568,8 +5607,8 @@ function CashierExitModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-[#0d0f10] shadow-2xl">
+    <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="erp-modal-panel w-full max-w-xl overflow-hidden rounded-lg border border-white/10 bg-[#0d0f10] shadow-2xl">
         <div className="border-b border-white/10 px-5 py-4">
           <p className="text-lg font-semibold text-zinc-100">Cerrar sesión</p>
           <p className="mt-1 text-sm text-zinc-400">
@@ -5594,7 +5633,7 @@ function CashierExitModal({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-white/10 px-5 py-4">
+        <div className="flex flex-col-reverse gap-2 border-t border-white/10 px-5 py-4 sm:flex-row sm:justify-end">
           <Button
             className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
             disabled={isLoading}
@@ -5640,7 +5679,7 @@ function PaginationControls({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-4 py-3">
+    <div className="erp-pagination flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-4 py-3">
       <p className="text-sm text-zinc-500">
         {label} • Página {currentPage} de {totalPages}
       </p>
@@ -5696,7 +5735,7 @@ function CompactFilterGroup<T extends string>({
   value: T;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+    <div className="erp-compact-filter flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
       <span className="mr-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-500">
         {label}
       </span>
@@ -5723,6 +5762,7 @@ function CajaView({
   cartItems,
   category,
   categories,
+  canSeeFinancialDetails,
   channelCommissions,
   clearFromCart,
   completeSale,
@@ -5762,6 +5802,7 @@ function CajaView({
   cartItems: CartLine[];
   category: string;
   categories: string[];
+  canSeeFinancialDetails: boolean;
   channelCommissions: Record<SaleChannel, number>;
   clearFromCart: (id: string) => void;
   completeSale: () => void;
@@ -5897,7 +5938,7 @@ function CajaView({
                     </p>
                   </div>
                   <Button
-                    className="border-amber-300/30 bg-black/20 text-amber-100 hover:bg-black/30"
+                    className="w-full border-amber-300/30 bg-black/20 text-amber-100 hover:bg-black/30 sm:w-auto"
                     onClick={() => {
                       setShowLowStockOnly(true);
                       setQuery("");
@@ -6369,7 +6410,7 @@ function CajaView({
             title="Pedido"
             subtitle={`${cartItems.length} líneas`}
           />
-          <div className="min-h-72 divide-y divide-white/10">
+          <div className="min-h-0 divide-y divide-white/10 md:min-h-72">
             {cartItems.length ? (
               cartItems.map((item) => (
                 <div className="p-3" key={item.lineId}>
@@ -6377,12 +6418,12 @@ function CajaView({
                     {item.imageUrl ? (
                       <div
                         aria-label={item.name}
-                        className="size-16 shrink-0 rounded-lg bg-cover bg-center"
+                        className="size-14 shrink-0 rounded-lg bg-cover bg-center sm:size-16"
                         role="img"
                         style={{ backgroundImage: `url("${item.imageUrl}")` }}
                       />
                     ) : (
-                      <div className="flex size-16 items-center justify-center rounded-lg bg-white/5 text-zinc-500">
+                      <div className="flex size-14 shrink-0 items-center justify-center rounded-lg bg-white/5 text-zinc-500 sm:size-16">
                         <Package className="size-5" />
                       </div>
                     )}
@@ -6430,7 +6471,7 @@ function CajaView({
                 </div>
               ))
             ) : (
-              <div className="flex min-h-72 flex-col items-center justify-center px-6 text-center">
+              <div className="flex min-h-36 flex-col items-center justify-center px-6 text-center md:min-h-72">
                 <ShoppingCart className="mb-3 size-8 text-zinc-600" />
                 <p className="font-semibold text-zinc-200">Pedido vacio</p>
               </div>
@@ -6464,7 +6505,7 @@ function CajaView({
               <p className="text-xs font-semibold uppercase text-zinc-500">
                 Método de pago
               </p>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 {paymentMethods.map((method) => (
                   <button
                     className={cn(
@@ -6482,48 +6523,50 @@ function CajaView({
                 ))}
               </div>
             </div>
-            <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/5 p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase text-zinc-500">
-                    Comisión aplicada
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-400">
-                    Canal + método de pago
-                  </p>
-                </div>
-                <p className="text-lg font-semibold text-cyan-100">
-                  {formatPercent(totalCommissionRate)}
-                </p>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-lg border border-white/10 bg-black/20 p-2">
-                  <p className="text-zinc-500">Canal</p>
-                  <p className="mt-1 font-semibold text-zinc-100">
-                    {formatPercent(channelCommissionRate)}
+            {canSeeFinancialDetails && (
+              <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/5 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-zinc-500">
+                      Comisión aplicada
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-400">
+                      Canal + método de pago
+                    </p>
+                  </div>
+                  <p className="text-lg font-semibold text-cyan-100">
+                    {formatPercent(totalCommissionRate)}
                   </p>
                 </div>
-                <div className="rounded-lg border border-white/10 bg-black/20 p-2">
-                  <p className="text-zinc-500">Método</p>
-                  <p className="mt-1 font-semibold text-zinc-100">
-                    {formatPercent(paymentCommissionRate)}
-                  </p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+                    <p className="text-zinc-500">Canal</p>
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {formatPercent(channelCommissionRate)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+                    <p className="text-zinc-500">Método</p>
+                    <p className="mt-1 font-semibold text-zinc-100">
+                      {formatPercent(paymentCommissionRate)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm">
+                  <span className="text-zinc-400">Descuento estimado</span>
+                  <span className="font-semibold text-rose-100">
+                    {formatCurrency(estimatedCommission)}
+                  </span>
                 </div>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-3 border-t border-white/10 pt-3 text-sm">
-                <span className="text-zinc-400">Descuento estimado</span>
-                <span className="font-semibold text-rose-100">
-                  {formatCurrency(estimatedCommission)}
-                </span>
-              </div>
-            </div>
+            )}
             <div className="rounded-lg border border-white/10 bg-black/20 p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-semibold text-zinc-100">Descuento</p>
                 </div>
                 <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                   onClick={() => setIsDiscountOpen(!isDiscountOpen)}
                   size="sm"
                   type="button"
@@ -6580,7 +6623,7 @@ function CajaView({
                       </label>
                     </div>
                     <Button
-                      className="self-end border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                      className="w-full self-end border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                       onClick={() => {
                         setDiscountValue("");
                         setDiscountMode("amount");
@@ -6628,10 +6671,12 @@ function CajaView({
 }
 
 function HistorialVentasView({
+  canDeleteSales,
   deleteSale,
   sales,
   saleItems,
 }: {
+  canDeleteSales: boolean;
   deleteSale: (sale: Sale) => void;
   sales: Sale[];
   saleItems: SaleItem[];
@@ -6799,18 +6844,20 @@ function HistorialVentasView({
                       </div>
                     </div>
                   </button>
-                  <div className="mt-3 flex justify-end">
-                    <Button
-                      className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
-                      onClick={() => deleteSale(sale)}
-                      size="sm"
-                      type="button"
-                      variant="outline"
-                    >
-                      <Trash2 className="size-4" />
-                      Eliminar
-                    </Button>
-                  </div>
+                  {canDeleteSales && (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        className="border-rose-300/30 bg-rose-300/10 text-rose-100 hover:bg-rose-300/20"
+                        onClick={() => deleteSale(sale)}
+                        size="sm"
+                        type="button"
+                        variant="outline"
+                      >
+                        <Trash2 className="size-4" />
+                        Eliminar
+                      </Button>
+                    </div>
+                  )}
 
                   {isExpanded && (
                     <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
@@ -10311,7 +10358,7 @@ function EmpleadosView({
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap gap-2">
+        <div className="erp-employee-summary grid gap-2 sm:grid-cols-3 xl:flex xl:flex-wrap">
           <div className="flex items-center gap-2 rounded-lg border border-emerald-300/20 bg-emerald-300/10 px-3 py-2">
             <Users className="size-4 text-emerald-100" />
             <span className="text-xs font-semibold uppercase text-emerald-100">
@@ -10373,7 +10420,7 @@ function EmpleadosView({
 
         <button
           className={cn(
-            "flex w-full items-center justify-between gap-4 rounded-lg border px-4 py-3 text-left shadow-2xl transition xl:max-w-[430px]",
+            "flex w-full flex-col items-stretch gap-3 rounded-lg border px-4 py-3 text-left shadow-2xl transition sm:flex-row sm:items-center sm:justify-between xl:max-w-[430px]",
             isRecordsOpen
               ? "border-[var(--erp-border)] bg-[var(--erp-panel)] hover:bg-white/5"
               : "border-[var(--erp-primary-border)] bg-[var(--erp-primary-soft)] hover:bg-[var(--erp-primary-hover)]",
@@ -10403,7 +10450,7 @@ function EmpleadosView({
           </div>
           <span
             className={cn(
-              "shrink-0 rounded-lg px-4 py-2 text-sm font-semibold",
+              "shrink-0 rounded-lg px-4 py-2 text-center text-sm font-semibold sm:text-left",
               isRecordsOpen
                 ? "border border-[var(--erp-border)] bg-[var(--erp-panel-alt)] text-[var(--erp-text)]"
                 : "bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
@@ -10528,10 +10575,10 @@ function EmpleadosView({
                     );
                   })()}
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
                   {attendanceStatusMap.get(getStaffKey(person))?.isWorking ? (
                     <Button
-                      className="min-w-36 border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+                      className="w-full border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20 sm:min-w-36"
                       onClick={() => requestAttendance(person, "salida")}
                       type="button"
                       variant="outline"
@@ -10541,7 +10588,7 @@ function EmpleadosView({
                     </Button>
                   ) : (
                     <Button
-                      className="min-w-36 border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                      className="w-full border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20 sm:min-w-36"
                       onClick={() => requestAttendance(person, "entrada")}
                       type="button"
                       variant="outline"
@@ -10584,7 +10631,7 @@ function EmpleadosView({
         {isRecordsOpen && (
         <DarkPanel className="self-start">
           <button
-            className="flex w-full items-center justify-between gap-4 p-4 text-left transition hover:bg-white/5"
+            className="flex w-full flex-col items-stretch gap-3 p-4 text-left transition hover:bg-white/5 sm:flex-row sm:items-center sm:justify-between"
             onClick={() => setIsRecordsOpen((current) => !current)}
             type="button"
           >
@@ -10600,7 +10647,7 @@ function EmpleadosView({
             </div>
             <span
               className={cn(
-                "rounded-lg border px-4 py-2 text-sm font-semibold",
+                "rounded-lg border px-4 py-2 text-center text-sm font-semibold",
                 isRecordsOpen
                   ? "border-[var(--erp-border)] bg-[var(--erp-panel-alt)] text-[var(--erp-text)]"
                   : "border-[var(--erp-primary)] bg-[var(--erp-primary)] text-[var(--erp-primary-text)]",
@@ -10657,7 +10704,7 @@ function EmpleadosView({
 
                   return (
                     <div
-                      className="flex items-start justify-between gap-3 rounded-lg border border-white/10 bg-black/20 p-4"
+                      className="flex flex-col items-stretch gap-3 rounded-lg border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-start sm:justify-between"
                       key={record.id}
                     >
                       <div className="min-w-0">
@@ -10690,7 +10737,7 @@ function EmpleadosView({
                           </Badge>
                         </div>
                       </div>
-                      <p className="shrink-0 text-right text-sm text-zinc-400">
+                      <p className="text-left text-sm text-zinc-400 sm:shrink-0 sm:text-right">
                         {formatFullDateTime(record.recordedAt)}
                       </p>
                     </div>
@@ -10709,8 +10756,8 @@ function EmpleadosView({
         )}
       </div>
       {pinRequest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-          <div className="w-full max-w-sm rounded-lg border border-white/10 bg-[#090d10] p-5 shadow-2xl">
+        <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="erp-modal-panel w-full max-w-sm rounded-lg border border-white/10 bg-[#090d10] p-5 shadow-2xl">
             <h3 className="text-lg font-semibold text-zinc-100">
               Confirmar {pinRequest.eventType === "entrada" ? "entrada" : "salida"}
             </h3>
@@ -10734,7 +10781,7 @@ function EmpleadosView({
             {pinError && (
               <p className="mt-2 text-sm font-semibold text-rose-200">{pinError}</p>
             )}
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button
                 className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                 onClick={() => setPinRequest(null)}
@@ -10889,7 +10936,7 @@ function HistorialEmpleadosView({
                 className="rounded-lg border border-white/10 bg-black/20 p-4"
                 key={person.id ?? person.name}
               >
-                <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-zinc-100">{person.name}</p>
                     <p className="mt-1 truncate text-sm text-zinc-400">
@@ -10897,7 +10944,7 @@ function HistorialEmpleadosView({
                     </p>
                   </div>
                   <Button
-                    className="shrink-0 border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+                    className="w-full shrink-0 border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20 sm:w-auto"
                     onClick={() => {
                       setIsCreatingEmployee(false);
                       setEditingId(person.id ?? person.name);
@@ -10948,7 +10995,7 @@ function HistorialEmpleadosView({
 
               return (
                 <div
-                  className="flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-black/20 p-4"
+                  className="flex flex-col items-stretch gap-3 rounded-lg border border-white/10 bg-black/20 p-4 sm:flex-row sm:items-center sm:justify-between"
                   key={record.id}
                 >
                   <div className="min-w-0">
@@ -10960,7 +11007,7 @@ function HistorialEmpleadosView({
                     </p>
                   </div>
                   <Button
-                    className="shrink-0 border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+                    className="w-full shrink-0 border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20 sm:w-auto"
                     onClick={() => {
                       setEditingAttendanceId(record.id);
                       setIsCreatingAttendance(false);
@@ -11719,7 +11766,7 @@ function StockView({
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           icon={Package}
           label="Productos activos"
@@ -11756,9 +11803,9 @@ function StockView({
                   {lowStock.length} producto{lowStock.length === 1 ? "" : "s"} en bajo stock.
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
                 <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                   onClick={() => setIsStockAlertOpen((current) => !current)}
                   size="sm"
                   type="button"
@@ -11767,7 +11814,7 @@ function StockView({
                   {isStockAlertOpen ? "Ocultar detalle" : "Ver detalle"}
                 </Button>
                 <Button
-                  className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+                  className="w-full border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20 sm:w-auto"
                   onClick={() => {
                     setStockTab("productos");
                     setShowOnlyLowProducts(true);
@@ -11810,7 +11857,7 @@ function StockView({
           ].map((tab) => (
             <button
               className={cn(
-                "rounded-lg border px-4 py-2 text-sm font-semibold transition",
+                "flex-1 rounded-lg border px-4 py-2 text-sm font-semibold transition sm:flex-none",
                 stockTab === tab.id
                   ? "border-cyan-300 bg-cyan-300 text-zinc-950"
                   : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
@@ -11838,9 +11885,9 @@ function StockView({
             icon={Snowflake}
             title="Gustos"
             right={
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
                 <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                   onClick={() => setIsFlavorHistoryOpen(true)}
                   size="sm"
                   type="button"
@@ -11851,7 +11898,7 @@ function StockView({
                 </Button>
                 {canManageStock ? (
                   <Button
-                    className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                    className="w-full bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200 sm:w-auto"
                     onClick={openFlavorForm}
                     size="sm"
                     type="button"
@@ -11865,7 +11912,7 @@ function StockView({
           />
           <div className="space-y-4 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative max-w-sm">
+              <div className="relative w-full max-w-sm">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-zinc-500" />
                 <input
                   className="h-11 w-full rounded-lg border border-white/10 bg-black/30 pl-10 pr-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-500 focus:border-cyan-300/60"
@@ -11955,10 +12002,10 @@ function StockView({
                         </div>
 
                       {canManageStock && (
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
                             {activeBatch ? (
                               <Button
-                                className="border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20"
+                                className="w-full border-amber-300/30 bg-amber-300/10 text-amber-100 hover:bg-amber-300/20 sm:w-auto"
                                 onClick={async () => {
                                   await closeFlavorBatch(activeBatch, 0);
                                 }}
@@ -11970,7 +12017,7 @@ function StockView({
                               </Button>
                             ) : (
                               <Button
-                                className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                                className="w-full border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20 sm:w-auto"
                                 onClick={() => openFlavorBatchModal(flavor)}
                                 size="sm"
                                 type="button"
@@ -11983,7 +12030,7 @@ function StockView({
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
-                                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                                  className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                                   size="sm"
                                   type="button"
                                   variant="outline"
@@ -12034,7 +12081,7 @@ function StockView({
             title="Productos"
             right={canManageStock ? (
               <Button
-                className="bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200"
+                className="w-full bg-cyan-300 font-semibold text-zinc-950 hover:bg-cyan-200 sm:w-auto"
                 onClick={openProductForm}
                 size="sm"
                 type="button"
@@ -12055,9 +12102,9 @@ function StockView({
                   value={productQuery}
                 />
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
                 <Button
-                  className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                  className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                   onClick={() => setIsProductCategoryOpen((current) => !current)}
                   size="sm"
                   type="button"
@@ -12068,7 +12115,7 @@ function StockView({
                 </Button>
                 <Button
                   className={cn(
-                    "font-semibold hover:bg-amber-300/20",
+                    "w-full font-semibold hover:bg-amber-300/20 sm:w-auto",
                     showOnlyLowProducts
                       ? "border-amber-300 bg-amber-300 text-zinc-950"
                       : "border-amber-300/30 bg-amber-300/10 text-amber-100",
@@ -12153,17 +12200,19 @@ function StockView({
                             {product.minStock} {product.unit}
                           </p>
                         </div>
-                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                          <p className="text-xs uppercase text-zinc-500">Costo</p>
-                          <p className="mt-1 font-semibold text-zinc-100">
-                            {formatCurrency(product.cost)}
-                          </p>
-                        </div>
+                        {canManageStock && (
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <p className="text-xs uppercase text-zinc-500">Costo</p>
+                            <p className="mt-1 font-semibold text-zinc-100">
+                              {formatCurrency(product.cost)}
+                            </p>
+                          </div>
+                        )}
                       </div>
 
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
                         <Button
-                          className="border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20"
+                          className="w-full border-emerald-300/30 bg-emerald-300/10 text-emerald-100 hover:bg-emerald-300/20 sm:w-auto"
                           onClick={() =>
                             openQuickStock({ item: product, type: "product" })
                           }
@@ -12177,7 +12226,7 @@ function StockView({
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button
-                              className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+                              className="w-full border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10 sm:w-auto"
                               size="sm"
                               type="button"
                               variant="outline"
@@ -12520,8 +12569,8 @@ function StockView({
       )}
 
       {quickStockTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl">
+        <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+          <div className="erp-modal-panel w-full max-w-lg overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl">
             <PanelHeader
               icon={Plus}
               title="Reponer stock"
@@ -12618,7 +12667,7 @@ function StockFormModal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -12626,7 +12675,7 @@ function StockFormModal({
     >
       <div
         aria-modal="true"
-        className="max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl"
+        className="erp-modal-panel max-h-[92vh] w-full max-w-4xl overflow-hidden rounded-lg border border-[var(--erp-border)] bg-[var(--erp-panel)] shadow-2xl"
         role="dialog"
       >
         <PanelHeader
@@ -13063,8 +13112,8 @@ function DeleteConfirmModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
+    <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="erp-modal-panel w-full max-w-md overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
         <div className="border-b border-white/10 p-4">
           <div className="flex items-start gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-rose-300/20 bg-rose-300/10 text-rose-100">
@@ -13076,7 +13125,7 @@ function DeleteConfirmModal({
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap justify-end gap-2 p-4">
+        <div className="flex flex-col-reverse gap-2 p-4 sm:flex-row sm:justify-end">
           <Button
             className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
             disabled={isLoading}
@@ -13123,8 +13172,8 @@ function HelpModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
+    <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
+      <div className="erp-modal-panel flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
         <PanelHeader
           icon={CircleHelp}
           right={
@@ -13762,12 +13811,12 @@ function PanelHeader({
         <div className="flex size-10 items-center justify-center rounded-lg bg-white/5 text-[var(--erp-primary)]">
           <Icon className="size-5" />
         </div>
-        <div>
-          <h2 className="font-semibold leading-tight text-[var(--erp-text)]">{title}</h2>
+        <div className="min-w-0">
+          <h2 className="break-words font-semibold leading-tight text-[var(--erp-text)]">{title}</h2>
           {subtitle && <p className="text-sm text-[var(--erp-muted)]">{subtitle}</p>}
         </div>
       </div>
-      {right}
+      {right ? <div className="erp-panel-header-actions">{right}</div> : null}
     </div>
   );
 }
@@ -13865,7 +13914,7 @@ function IconButton({
 }) {
   return (
     <button
-      className="flex size-9 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
+      className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-zinc-200 transition hover:bg-white/10"
       onClick={onClick}
       type="button"
     >
@@ -13886,12 +13935,14 @@ function TotalRow({
   return (
     <div
       className={cn(
-        "flex items-center justify-between py-1 text-sm",
+        "flex items-center justify-between gap-3 py-1 text-sm",
         strong && "text-base font-semibold",
       )}
     >
-      <span className="text-zinc-500">{label}</span>
-      <span className={strong ? "text-zinc-100" : "text-zinc-300"}>{value}</span>
+      <span className="shrink-0 text-zinc-500">{label}</span>
+      <span className={cn("break-words text-right", strong ? "text-zinc-100" : "text-zinc-300")}>
+        {value}
+      </span>
     </div>
   );
 }

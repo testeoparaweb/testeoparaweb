@@ -5,6 +5,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 const DEFAULT_BRANCH_ID = "00000000-0000-0000-0000-000000000001";
 
+const toNumber = (value: unknown) => {
+  const numberValue = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(numberValue) ? numberValue : 0;
+};
+
 type VentaPayload = {
   venta: Record<string, unknown>;
   items: Array<Record<string, unknown>>;
@@ -44,6 +49,42 @@ export async function POST(request: Request) {
     }
 
     const supabase = createAdminClient();
+    const productIds = [
+      ...new Set(
+        pedido.items
+          .map((item) => String(item.producto_id ?? "").trim())
+          .filter(Boolean),
+      ),
+    ];
+    const productsForItems = productIds.length
+      ? await supabase
+          .from("productos")
+          .select("id,costo")
+          .in("id", productIds)
+      : { data: [], error: null };
+
+    if (productsForItems.error) {
+      return NextResponse.json(
+        { error: productsForItems.error.message },
+        { status: 500 },
+      );
+    }
+
+    const productCosts = new Map(
+      (productsForItems.data ?? []).map((product) => [
+        String(product.id),
+        toNumber(product.costo),
+      ]),
+    );
+
+    pedido.items = pedido.items.map((item) => {
+      const productId = String(item.producto_id ?? "").trim();
+      return {
+        ...item,
+        costo: productCosts.get(productId) ?? toNumber(item.costo),
+      };
+    });
+
     const branchId = String(
       pedido.venta?.sucursal_id ?? DEFAULT_BRANCH_ID,
     ).trim();
@@ -98,7 +139,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const permission = await requireRoles(["admin", "dueno", "empleado"]);
+    const permission = await requireRoles(["admin", "dueno"]);
     if (!permission.ok) return permission.response;
 
     const body = (await request.json()) as { id?: string };

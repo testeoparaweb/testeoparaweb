@@ -1,7 +1,6 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -49,12 +48,11 @@ export function LoginForm({
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const supabase = createClient();
     setIsLoading(true);
     setError(null);
 
     try {
-      const lookupResponse = await fetch("/api/auth/login", {
+      const loginResponse = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -63,23 +61,17 @@ export function LoginForm({
         }),
       });
 
-      const lookupData = (await lookupResponse.json().catch(() => null)) as {
-        email?: string;
+      const loginData = (await loginResponse.json().catch(() => null)) as {
         error?: string;
       } | null;
 
-      if (!lookupResponse.ok || !lookupData?.email) {
+      if (!loginResponse.ok) {
         throw new Error(
-          lookupData?.error ?? "Usuario o contraseña incorrectos",
+          loginData?.error ?? "Usuario o contraseña incorrectos",
         );
       }
 
-      const { error } = await supabase.auth.signInWithPassword({
-        email: lookupData.email,
-        password,
-      });
-      if (error) throw error;
-      window.location.assign("/");
+      window.location.replace("/");
     } catch (error: unknown) {
       setError(
         error instanceof Error
