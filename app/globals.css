@@ -98,6 +98,16 @@
     overflow: hidden;
   }
 
+  html:has(.erp-modal-shell),
+  html:has(.erp-flavor-modal),
+  html:has(.erp-user-modal-shell),
+  body:has(.erp-modal-shell),
+  body:has(.erp-flavor-modal),
+  body:has(.erp-user-modal-shell) {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   .erp-content,
   .erp-sidebar-nav {
     scrollbar-width: thin;
@@ -524,18 +534,143 @@
 
     .erp-modal-shell {
       align-items: flex-end;
-      padding: 0.75rem;
+      justify-content: center;
+      height: 100dvh;
+      overflow: hidden;
+      overscroll-behavior: contain;
+      padding: 0.5rem;
     }
 
     .erp-modal-panel {
-      max-height: calc(100dvh - 1.5rem);
+      display: flex;
+      width: 100%;
+      max-height: calc(100dvh - 1rem);
+      min-height: 0;
+      flex-direction: column;
       overflow: hidden;
       border-radius: 0.5rem;
     }
 
+    .erp-modal-scroll-area {
+      min-height: 0;
+      flex: 1 1 auto;
+      max-height: none;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .erp-modal-panel > .erp-panel-header,
+    .erp-modal-panel > :first-child:not(.erp-modal-scroll-area),
+    .erp-modal-panel > :last-child:not(.erp-modal-scroll-area) {
+      flex: 0 0 auto;
+    }
+
+    .erp-user-modal-shell {
+      height: 100dvh;
+      overflow: hidden;
+      overscroll-behavior: contain;
+    }
+
+    .erp-user-modal-shell > div {
+      height: 100dvh;
+      max-height: 100dvh;
+    }
+
+    .erp-user-modal-shell [class*="overflow-y-auto"] {
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    html:has(.erp-modal-shell),
+    html:has(.erp-flavor-modal),
+    html:has(.erp-user-modal-shell),
+    body:has(.erp-modal-shell),
+    body:has(.erp-flavor-modal),
+    body:has(.erp-user-modal-shell) {
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+
     .erp-flavor-modal {
       align-items: stretch;
+      height: 100dvh;
+      overflow: hidden;
+      overscroll-behavior: contain;
       padding: 0;
+    }
+
+    .erp-ranking-header {
+      display: none;
+    }
+
+    .erp-product-ranking-row,
+    .erp-flavor-ranking-row {
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 0.55rem 0.85rem;
+      align-items: start;
+      padding: 0.85rem;
+    }
+
+    .erp-product-ranking-row > :first-child,
+    .erp-flavor-ranking-row > :first-child {
+      grid-column: 1;
+      grid-row: 1 / span 5;
+      margin-top: 0.1rem;
+    }
+
+    .erp-product-ranking-row > :nth-child(2),
+    .erp-flavor-ranking-row > :nth-child(2) {
+      grid-column: 2;
+      min-width: 0;
+    }
+
+    .erp-product-ranking-row > :nth-child(n + 3),
+    .erp-flavor-ranking-row > :nth-child(n + 3) {
+      grid-column: 2;
+      display: flex;
+      min-width: 0;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 0.75rem;
+      overflow-wrap: anywhere;
+    }
+
+    .erp-product-ranking-row > :nth-child(n + 3)::before,
+    .erp-flavor-ranking-row > :nth-child(n + 3)::before {
+      flex: 0 0 auto;
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--erp-muted);
+    }
+
+    .erp-product-ranking-row > :nth-child(3)::before {
+      content: "Vendidos";
+    }
+
+    .erp-product-ranking-row > :nth-child(4)::before {
+      content: "Total";
+    }
+
+    .erp-product-ranking-row > :nth-child(5)::before {
+      content: "Costo";
+    }
+
+    .erp-product-ranking-row > :nth-child(6)::before {
+      content: "Margen";
+    }
+
+    .erp-flavor-ranking-row > :nth-child(3)::before {
+      content: "Recargas";
+    }
+
+    .erp-flavor-ranking-row > :nth-child(4)::before {
+      content: "Kilos";
+    }
+
+    .erp-flavor-ranking-row > :nth-child(5)::before {
+      content: "Ultima carga";
     }
 
     .erp-flavor-card {
