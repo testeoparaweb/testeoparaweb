@@ -310,6 +310,7 @@
     }
 
     .erp-connection-status,
+    .erp-desktop-download-action,
     .erp-desktop-update-action {
       display: none;
     }
@@ -787,7 +788,10 @@
   }
 
   .erp-theme .text-emerald-100,
+  .erp-theme .text-emerald-100\/70,
   .erp-theme .text-emerald-200,
+  .erp-theme .text-emerald-50,
+  .erp-theme .text-emerald-50\/70,
   .erp-theme .text-green-100,
   .erp-theme .text-green-200 {
     color: var(--erp-success);
@@ -799,6 +803,7 @@
   }
 
   .erp-theme .bg-emerald-300\/10,
+  .erp-theme .hover\:bg-emerald-300\/10:hover,
   .erp-theme .bg-green-300\/10 {
     background-color: var(--erp-success-soft);
   }
@@ -811,6 +816,7 @@
 
   .erp-theme .border-emerald-300\/20,
   .erp-theme .border-emerald-300\/30,
+  .erp-theme .focus\:border-emerald-300\/60:focus,
   .erp-theme .border-green-300\/20,
   .erp-theme .border-green-300\/30 {
     border-color: var(--erp-success-border);
@@ -863,18 +869,22 @@
   }
 
   .erp-theme .bg-rose-300\/10,
+  .erp-theme .bg-rose-400\/10,
   .erp-theme .bg-red-300\/10 {
     background-color: var(--erp-danger-soft);
   }
 
   .erp-theme .bg-rose-300\/20,
+  .erp-theme .bg-rose-400\/20,
   .erp-theme .hover\:bg-rose-300\/20:hover,
+  .erp-theme .hover\:bg-rose-400\/20:hover,
   .erp-theme .hover\:bg-red-300\/20:hover {
     background-color: var(--erp-danger-hover);
   }
 
   .erp-theme .border-rose-300\/20,
   .erp-theme .border-rose-300\/30,
+  .erp-theme .border-rose-400\/40,
   .erp-theme .border-rose-500\/80,
   .erp-theme .border-red-300\/20,
   .erp-theme .border-red-300\/30 {

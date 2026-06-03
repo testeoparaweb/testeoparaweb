@@ -110,13 +110,23 @@ const runStore = async <T>(
     const transaction = db.transaction(storeName, mode);
     const store = transaction.objectStore(storeName);
     const request = action(store);
+    let closed = false;
+    const closeDb = () => {
+      if (closed) return;
+      closed = true;
+      db.close();
+    };
 
     request.onerror = () => reject(request.error ?? new Error("Operación offline fallida"));
     request.onsuccess = () => resolve(request.result);
-    transaction.oncomplete = () => db.close();
+    transaction.oncomplete = closeDb;
     transaction.onerror = () => {
-      db.close();
+      closeDb();
       reject(transaction.error ?? new Error("Transacción offline fallida"));
+    };
+    transaction.onabort = () => {
+      closeDb();
+      reject(transaction.error ?? new Error("Transacción offline cancelada"));
     };
   });
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -3268,6 +3268,7 @@ export function GestionLocalErp() {
   const [isOnline, setIsOnline] = useState(true);
   const [pendingOfflineSales, setPendingOfflineSales] = useState(0);
   const [isSyncingOfflineSales, setIsSyncingOfflineSales] = useState(false);
+  const offlineSyncInProgressRef = useRef(false);
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdaterState>({
     status: "unsupported",
   });
@@ -3686,84 +3687,93 @@ export function GestionLocalErp() {
   };
 
   const syncPendingOfflineSales = async () => {
-    if (isSyncingOfflineSales || !window.navigator.onLine) return;
+    if (
+      offlineSyncInProgressRef.current ||
+      !sessionUser ||
+      !window.navigator.onLine
+    ) {
+      return;
+    }
 
+    offlineSyncInProgressRef.current = true;
     setIsSyncingOfflineSales(true);
-    const pendingSales = await getOfflineSales();
-    const pendingCashCloses = await getOfflineCashCloses();
-    const pendingMutations = await getOfflineJsonMutations();
-    let synced = 0;
-    let syncError = "";
 
-    for (const pendingMutation of pendingMutations) {
-      try {
-        const response = await fetch(pendingMutation.request.url, {
-          method: pendingMutation.request.method,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(pendingMutation.request.body),
-        });
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(data?.error ?? "No se pudo sincronizar un cambio");
+    try {
+      const pendingSales = await getOfflineSales();
+      const pendingCashCloses = await getOfflineCashCloses();
+      const pendingMutations = await getOfflineJsonMutations();
+      const pendingOperations = [
+        ...pendingSales.map((record) => ({
+          createdAt: record.createdAt,
+          record,
+          type: "sale" as const,
+        })),
+        ...pendingCashCloses.map((record) => ({
+          createdAt: record.createdAt,
+          record,
+          type: "cash-close" as const,
+        })),
+        ...pendingMutations.map((record) => ({
+          createdAt: record.createdAt,
+          record,
+          type: "mutation" as const,
+        })),
+      ].sort(
+        (left, right) =>
+          new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+      );
+      let synced = 0;
+      let syncError = "";
+
+      for (const operation of pendingOperations) {
+        try {
+          if (operation.type === "mutation") {
+            const response = await fetch(operation.record.request.url, {
+              method: operation.record.request.method,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(operation.record.request.body),
+            });
+            if (!response.ok) {
+              const data = (await response.json().catch(() => null)) as {
+                error?: string;
+              } | null;
+              throw new Error(data?.error ?? "No se pudo sincronizar un cambio");
+            }
+            await removeOfflineJsonMutation(operation.record.id);
+          } else if (operation.type === "sale") {
+            await submitSalePayload(operation.record.payload);
+            await removeOfflineSale(operation.record.id);
+          } else {
+            await submitCashClosePayload(operation.record.payload);
+            await removeOfflineCashClose(operation.record.id);
+          }
+          synced += 1;
+        } catch (error) {
+          syncError =
+            error instanceof Error ? error.message : "No se pudo sincronizar un pendiente";
+          break;
         }
-        await removeOfflineJsonMutation(pendingMutation.id);
-        synced += 1;
-      } catch (error) {
-        syncError =
-          error instanceof Error ? error.message : "No se pudo sincronizar un cambio";
-        break;
       }
-    }
 
-    for (const pendingSale of pendingSales) {
-      if (syncError) break;
+      await refreshOfflineSaleCount();
 
-      try {
-        await submitSalePayload(pendingSale.payload);
-        await removeOfflineSale(pendingSale.id);
-        synced += 1;
-      } catch (error) {
-        syncError =
-          error instanceof Error ? error.message : "No se pudo sincronizar una venta";
-        break;
+      if (synced > 0) {
+        await loadData(`${synced} dato${synced === 1 ? "" : "s"} offline sincronizado${synced === 1 ? "" : "s"}`);
+        if (syncError) {
+          setNotice(`Quedaron pendientes sin sincronizar: ${syncError}`);
+        }
+      } else if (syncError) {
+        setNotice(`No se pudo sincronizar pendiente: ${syncError}`);
       }
-    }
-
-    for (const pendingClose of pendingCashCloses) {
-      if (syncError) break;
-
-      try {
-        await submitCashClosePayload(pendingClose.payload);
-        await removeOfflineCashClose(pendingClose.id);
-        synced += 1;
-      } catch (error) {
-        syncError =
-          error instanceof Error ? error.message : "No se pudo sincronizar un cierre";
-        break;
-      }
-    }
-
-    await refreshOfflineSaleCount();
-    setIsSyncingOfflineSales(false);
-
-    if (synced > 0) {
-      await loadData(`${synced} dato${synced === 1 ? "" : "s"} offline sincronizado${synced === 1 ? "" : "s"}`);
-      if (syncError) {
-        setNotice(`Quedaron pendientes sin sincronizar: ${syncError}`);
-      }
-    } else if (syncError) {
-      setNotice(`No se pudo sincronizar pendiente: ${syncError}`);
+    } finally {
+      offlineSyncInProgressRef.current = false;
+      setIsSyncingOfflineSales(false);
     }
   };
 
   useEffect(() => {
     const updateOnlineStatus = () => {
       setIsOnline(window.navigator.onLine);
-      if (window.navigator.onLine) {
-        void syncPendingOfflineSales();
-      }
     };
 
     setIsOnline(window.navigator.onLine);
@@ -3778,16 +3788,14 @@ export function GestionLocalErp() {
       window.removeEventListener("online", updateOnlineStatus);
       window.removeEventListener("offline", updateOnlineStatus);
     };
-    // Las funciones usan el estado actual de la caja y no necesitan rearmar listeners.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (isOnline && pendingOfflineSales > 0) {
+    if (sessionUser && isOnline && pendingOfflineSales > 0) {
       void syncPendingOfflineSales();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOnline, pendingOfflineSales]);
+  }, [isOnline, pendingOfflineSales, sessionUser?.id]);
 
   useEffect(() => {
     if (!isBooting && !sessionUser) {
@@ -5108,6 +5116,17 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                         update={desktopUpdate}
                       />
                     </div>
+                    <Button
+                      asChild
+                      className="erp-desktop-download-action border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
+                      size="sm"
+                      variant="outline"
+                    >
+                      <a href="/api/desktop/installer">
+                        <ArrowDownCircle className="size-4" />
+                        Descargar
+                      </a>
+                    </Button>
                     <Button
                       className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
                       onClick={() => setIsHelpOpen(true)}
@@ -6525,7 +6544,7 @@ function CajaView({
                     className={cn(
                       "rounded-lg border px-3 py-2 text-xs font-semibold transition",
                       paymentMethod === method
-                        ? "border-emerald-300 bg-emerald-300 text-zinc-950"
+                        ? "border-[var(--erp-primary-border)] bg-[var(--erp-primary)] text-[var(--erp-primary-text)]"
                         : "border-white/10 bg-white/5 text-zinc-300 hover:bg-white/10",
                     )}
                     key={method}
@@ -9586,7 +9605,7 @@ function FinanzasView({
           <PanelHeader
             right={
               <Button
-                className="h-10 bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                className="h-10 bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
                 onClick={() => setIsExpensesPopupOpen(true)}
                 type="button"
               >
@@ -9677,7 +9696,7 @@ function FinanzasView({
               Cerrar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={() => {
                 saveExpenses(editableExpenseItems);
                 setIsExpensesPopupOpen(false);
@@ -12413,7 +12432,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={async () => {
                 const saved = await saveProduct(newProduct);
                 if (saved) closeProductForm();
@@ -12447,7 +12466,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={saveEditProductModal}
               type="button"
             >
@@ -12485,7 +12504,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={createFlavorOnly}
               type="button"
             >
@@ -12516,7 +12535,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={saveEditFlavorModal}
               type="button"
             >
@@ -12565,7 +12584,7 @@ function StockView({
               Cancelar
             </Button>
             <Button
-              className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+              className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
               onClick={async () => {
                 const saved = await loadFlavorBatch(
                   batchFlavor,
@@ -12652,7 +12671,7 @@ function StockView({
                   Cancelar
                 </Button>
                 <Button
-                  className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+                  className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
                   disabled={quickStockIncrement <= 0 || isQuickStockSaving}
                   onClick={confirmQuickStock}
                   type="button"
@@ -13725,8 +13744,23 @@ function DesktopUpdateButton({
   onInstall: () => void;
   update: DesktopUpdaterState;
 }) {
-  if (update.status === "unsupported" || update.status === "idle") {
+  if (update.status === "unsupported") {
     return null;
+  }
+
+  if (update.status === "idle" || update.status === "not-available") {
+    return (
+      <Button
+        className="border-white/10 bg-white/5 text-zinc-100 hover:bg-white/10"
+        onClick={onCheck}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        <RefreshCw className="size-4" />
+        {update.status === "not-available" ? "App actualizada" : "Buscar actualización"}
+      </Button>
+    );
   }
 
   if (update.status === "available") {
@@ -13747,7 +13781,7 @@ function DesktopUpdateButton({
   if (update.status === "downloaded") {
     return (
       <Button
-        className="bg-emerald-300 font-semibold text-zinc-950 hover:bg-emerald-200"
+        className="bg-[var(--erp-primary)] font-semibold text-[var(--erp-primary-text)] hover:opacity-90"
         onClick={onInstall}
         size="sm"
         type="button"

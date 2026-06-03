@@ -24,6 +24,7 @@
     "appId": "com.facundos.heladeria",
     "productName": "Caja Heladeria",
     "copyright": "Copyright (c) 2026 cph.dev",
+    "compression": "maximum",
     "directories": {
       "output": "dist-electron"
     },

@@ -8,12 +8,47 @@ const PORT = 5123;
 const HOST = "127.0.0.1";
 const DEFAULT_UPDATE_URL =
   "https://github.com/testeoparaweb/testeoparaweb/releases/latest/download";
+const AUTO_UPDATE_CHECK_DELAY_MS = 90000;
+const SHOULD_AUTO_CHECK_UPDATES = process.env.ELECTRON_AUTO_UPDATE_CHECK === "true";
 let serverStarted = false;
 let mainWindow;
 let updaterStatus = {
   status: "idle",
   currentVersion: app.getVersion(),
 };
+
+const configureLowEndRuntime = () => {
+  process.env.NEXT_TELEMETRY_DISABLED = "1";
+
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-background-networking");
+  app.commandLine.appendSwitch("disable-component-update");
+  app.commandLine.appendSwitch("disable-domain-reliability");
+  app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
+  app.commandLine.appendSwitch("disable-smooth-scrolling");
+  app.commandLine.appendSwitch("disk-cache-size", "33554432");
+  app.commandLine.appendSwitch(
+    "disable-features",
+    "AutofillServerCommunication,BackForwardCache,CalculateNativeWinOcclusion,MediaRouter,OptimizationHints",
+  );
+};
+
+configureLowEndRuntime();
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+  });
+}
 
 const parseEnvFile = (filePath) => {
   if (!fs.existsSync(filePath)) return;
@@ -84,27 +119,9 @@ const getAppUrl = () =>
     ? `http://${HOST}:${PORT}`
     : process.env.ELECTRON_START_URL || "http://localhost:3000";
 
-const fetchDesktopIcon = async (appUrl) => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2500);
-
-  try {
-    const response = await fetch(`${appUrl}/api/erp/app-icon?size=512`, {
-      cache: "no-store",
-      signal: controller.signal,
-    });
-
-    if (!response.ok) return undefined;
-
-    const iconPath = path.join(app.getPath("userData"), "app-icon.png");
-    fs.writeFileSync(iconPath, Buffer.from(await response.arrayBuffer()));
-
-    return iconPath;
-  } catch {
-    return undefined;
-  } finally {
-    clearTimeout(timeout);
-  }
+const getCachedDesktopIcon = () => {
+  const iconPath = path.join(app.getPath("userData"), "app-icon.png");
+  return fs.existsSync(iconPath) ? iconPath : undefined;
 };
 
 const sendUpdaterStatus = (nextStatus) => {
@@ -126,6 +143,7 @@ const setupAutoUpdater = () => {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null;
 
   if (!app.isPackaged) {
     sendUpdaterStatus({
@@ -178,6 +196,10 @@ const setupAutoUpdater = () => {
     });
   });
 
+  if (!SHOULD_AUTO_CHECK_UPDATES) {
+    return;
+  }
+
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((error) => {
       sendUpdaterStatus({
@@ -185,7 +207,7 @@ const setupAutoUpdater = () => {
         status: "error",
       });
     });
-  }, 2500);
+  }, AUTO_UPDATE_CHECK_DELAY_MS);
 };
 
 ipcMain.handle("updater:get-status", () => updaterStatus);
@@ -211,7 +233,7 @@ const createWindow = async () => {
   }
 
   const appUrl = getAppUrl();
-  const iconPath = await fetchDesktopIcon(appUrl);
+  const iconPath = getCachedDesktopIcon();
   const win = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -222,10 +244,13 @@ const createWindow = async () => {
     autoHideMenuBar: true,
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
+      backgroundThrottling: true,
       contextIsolation: true,
+      devTools: !app.isPackaged,
       nodeIntegration: false,
       preload: path.join(__dirname, "preload.cjs"),
       sandbox: true,
+      spellcheck: false,
     },
   });
   mainWindow = win;
@@ -247,16 +272,18 @@ const createWindow = async () => {
   setupAutoUpdater();
 };
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  void createWindow();
+if (gotSingleInstanceLock) {
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    void createWindow();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      void createWindow();
-    }
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        void createWindow();
+      }
+    });
   });
-});
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {

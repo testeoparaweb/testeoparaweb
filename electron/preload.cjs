@@ -13,3 +13,7 @@ contextBridge.exposeInMainWorld("cajaUpdater", {
     return () => ipcRenderer.removeListener("updater:status", listener);
   },
 });
+
+contextBridge.exposeInMainWorld("cajaDesktop", {
+  isElectron: true,
+});
