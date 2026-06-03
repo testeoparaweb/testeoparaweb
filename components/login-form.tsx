@@ -54,6 +54,7 @@ export function LoginForm({
     try {
       const loginResponse = await fetch("/api/auth/login", {
         method: "POST",
+        cache: "no-store",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           usuario: username,
@@ -72,13 +73,13 @@ export function LoginForm({
       }
 
       window.location.replace("/");
+      return;
     } catch (error: unknown) {
       setError(
         error instanceof Error
           ? translateLoginError(error.message)
           : "No se pudo iniciar sesión",
       );
-    } finally {
       setIsLoading(false);
     }
   };

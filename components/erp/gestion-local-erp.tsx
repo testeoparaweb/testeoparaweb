@@ -2,7 +2,6 @@
 
 import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import {
   ArrowLeft,
@@ -70,7 +69,6 @@ import {
   type OfflineSalePayload,
   type OfflineSaleRecord,
 } from "@/lib/offline-sales";
-import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 type DesktopUpdaterStatus =
@@ -3218,7 +3216,6 @@ const mapAttendance = (attendance: AttendanceRow): Attendance => ({
 });
 
 export function GestionLocalErp() {
-  const router = useRouter();
   const [activeView, setActiveView] = useState<ViewId>("caja");
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] =
@@ -3794,9 +3791,9 @@ export function GestionLocalErp() {
 
   useEffect(() => {
     if (!isBooting && !sessionUser) {
-      router.replace("/auth/login");
+      window.location.replace("/auth/login");
     }
-  }, [isBooting, router, sessionUser]);
+  }, [isBooting, sessionUser]);
 
   useEffect(() => {
     if (!allowedViews.includes(activeView)) {
@@ -4801,12 +4798,29 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
 
     setIsCashierActionLoading(true);
 
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    setSessionUser(null);
-    setIsEndingCashierSession(false);
-    setIsCashierActionLoading(false);
-    router.push("/auth/login");
+    try {
+      const response = await fetch("/api/auth/logout", {
+        method: "POST",
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(data?.error ?? "No se pudo cerrar sesión");
+      }
+
+      window.location.replace("/auth/login");
+    } catch (error) {
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "No se pudo cerrar sesión. Revisá la conexión e intentá de nuevo.",
+      );
+      setIsCashierActionLoading(false);
+      setIsEndingCashierSession(false);
+    }
   };
 
   const saveCommissions = async (
