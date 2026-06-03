@@ -5494,7 +5494,7 @@ export function CashierSelectionModal({
           </div>
         </div>
 
-        <div className="max-h-[calc(100dvh-13rem)] space-y-4 overflow-y-auto p-5">
+        <div className="erp-modal-scroll-area max-h-[calc(100dvh-13rem)] space-y-4 overflow-y-auto p-5">
           <label className="block text-xs font-semibold uppercase tracking-[0.18em] text-zinc-500">
             Buscar empleado
             <div className="mt-2 flex items-center gap-3 rounded-xl border border-white/10 bg-[#080a0c] px-3">
@@ -5632,7 +5632,7 @@ function CashierExitModal({
           </p>
         </div>
 
-        <div className="p-5">
+        <div className="erp-modal-scroll-area p-5">
           <div
             className={cn(
               "rounded-xl border p-4 text-sm",
@@ -8450,7 +8450,7 @@ function AnalisisView({
           onClose={() => setActiveRankingDetail(null)}
           title="Detalle del ranking de gustos"
         >
-          <div className="max-h-[72vh] overflow-y-auto p-4">
+          <div className="p-4">
             <div className="mb-4 grid gap-3 sm:grid-cols-3">
               <AnalysisDetailCard
                 label="Más pedido del período"
@@ -8532,7 +8532,7 @@ function AnalisisView({
           onClose={() => setActiveRankingDetail(null)}
           title="Detalle del ranking de productos"
         >
-          <div className="max-h-[72vh] overflow-y-auto p-4">
+          <div className="p-4">
             <div className="mb-4 grid gap-3 sm:grid-cols-3">
               <AnalysisDetailCard
                 label="Más vendido"
@@ -8549,7 +8549,7 @@ function AnalisisView({
             </div>
 
             <div className="rounded-lg border border-white/10 bg-black/20">
-              <div className="grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px]">
+              <div className="erp-ranking-header grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px]">
                 <span>#</span>
                 <span>Producto</span>
                 <span>Vendidos</span>
@@ -8561,7 +8561,7 @@ function AnalisisView({
                 {productRankingRows.length ? (
                   productRankingRows.map((row, index) => (
                     <div
-                      className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px] md:items-center"
+                      className="erp-product-ranking-row grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px] md:items-center"
                       key={row.product}
                     >
                       <span className="flex size-7 items-center justify-center rounded-lg bg-white/5 text-xs font-semibold text-zinc-300">
@@ -8593,7 +8593,7 @@ function AnalisisView({
           onClose={() => setActiveRankingDetail(null)}
           title="Detalle del margen por producto"
         >
-          <div className="max-h-[72vh] overflow-y-auto p-4">
+          <div className="p-4">
             <div className="mb-4 grid gap-3 sm:grid-cols-3">
               <AnalysisDetailCard
                 label="Mejor margen"
@@ -8610,7 +8610,7 @@ function AnalisisView({
             </div>
 
             <div className="rounded-lg border border-white/10 bg-black/20">
-              <div className="grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px]">
+              <div className="erp-ranking-header grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px]">
                 <span>#</span>
                 <span>Producto</span>
                 <span>Vendidos</span>
@@ -8622,7 +8622,7 @@ function AnalisisView({
                 {allMarginRows.length ? (
                   allMarginRows.map((row, index) => (
                     <div
-                      className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px] md:items-center"
+                      className="erp-product-ranking-row grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px] md:items-center"
                       key={row.product}
                     >
                       <span className="flex size-7 items-center justify-center rounded-lg bg-white/5 text-xs font-semibold text-zinc-300">
@@ -8659,7 +8659,7 @@ function AnalisisView({
           onClose={() => setSelectedFlavorMonthKey(null)}
           title={`Gustos de ${selectedFlavorMonth.label}`}
         >
-          <div className="max-h-[72vh] overflow-y-auto p-4">
+          <div className="p-4">
             <div className="mb-4 grid gap-3 sm:grid-cols-3">
               <AnalysisDetailCard
                 label="Gusto más pedido"
@@ -8677,7 +8677,7 @@ function AnalisisView({
 
             {selectedFlavorMonth.flavors.length ? (
               <div className="rounded-lg border border-white/10 bg-black/20">
-                <div className="grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(160px,1fr)_110px_110px_minmax(170px,1fr)]">
+                <div className="erp-ranking-header grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(160px,1fr)_110px_110px_minmax(170px,1fr)]">
                   <span>#</span>
                   <span>Gusto</span>
                   <span>Recargas</span>
@@ -8687,7 +8687,7 @@ function AnalisisView({
                 <div className="divide-y divide-white/10">
                   {selectedFlavorMonth.flavors.map((flavor, index) => (
                     <div
-                      className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(160px,1fr)_110px_110px_minmax(170px,1fr)] md:items-center"
+                      className="erp-flavor-ranking-row grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(160px,1fr)_110px_110px_minmax(170px,1fr)] md:items-center"
                       key={flavor.id}
                     >
                       <span className="flex size-7 items-center justify-center rounded-lg bg-white/5 text-xs font-semibold text-zinc-300">
@@ -8721,7 +8721,7 @@ function AnalisisView({
           onClose={() => setSelectedProductMonthKey(null)}
           title={`Productos de ${selectedProductMonth.label}`}
         >
-          <div className="max-h-[72vh] overflow-y-auto p-4">
+          <div className="p-4">
             <div className="mb-4 grid gap-3 sm:grid-cols-4">
               <AnalysisDetailCard
                 label="Producto más vendido"
@@ -8743,7 +8743,7 @@ function AnalisisView({
 
             {selectedProductMonth.products.length ? (
               <div className="rounded-lg border border-white/10 bg-black/20">
-                <div className="grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px]">
+                <div className="erp-ranking-header grid gap-3 border-b border-white/10 px-4 py-3 text-xs font-semibold uppercase text-zinc-500 md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px]">
                   <span>#</span>
                   <span>Producto</span>
                   <span>Vendidos</span>
@@ -8754,7 +8754,7 @@ function AnalisisView({
                 <div className="divide-y divide-white/10">
                   {selectedProductMonth.products.map((product, index) => (
                     <div
-                      className="grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px] md:items-center"
+                      className="erp-product-ranking-row grid gap-3 px-4 py-3 text-sm md:grid-cols-[42px_minmax(180px,1fr)_100px_120px_120px_120px] md:items-center"
                       key={product.product}
                     >
                       <span className="flex size-7 items-center justify-center rounded-lg bg-white/5 text-xs font-semibold text-zinc-300">
@@ -12589,7 +12589,7 @@ function StockView({
               icon={Plus}
               title="Reponer stock"
             />
-            <div className="space-y-4 p-4">
+            <div className="erp-modal-scroll-area space-y-4 overflow-y-auto p-4">
               <div className="rounded-lg border border-white/10 bg-black/20 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -12707,7 +12707,7 @@ function StockFormModal({
           }
           title={title}
         />
-        <div className="max-h-[calc(92vh-74px)] overflow-y-auto">{children}</div>
+        <div className="erp-modal-scroll-area max-h-[calc(92vh-74px)] overflow-y-auto">{children}</div>
       </div>
     </div>
   );
@@ -13128,7 +13128,7 @@ function DeleteConfirmModal({
   return (
     <div className="erp-modal-shell fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
       <div className="erp-modal-panel w-full max-w-md overflow-hidden rounded-lg border border-white/10 bg-[#101315] shadow-2xl">
-        <div className="border-b border-white/10 p-4">
+        <div className="erp-modal-scroll-area border-b border-white/10 p-4">
           <div className="flex items-start gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-rose-300/20 bg-rose-300/10 text-rose-100">
               <Trash2 className="size-5" />
@@ -13204,7 +13204,7 @@ function HelpModal({
           subtitle="Guía completa de cada opción del menú: qué es, cómo se usa y qué modifica."
           title="Ayuda del sistema"
         />
-        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+        <div className="erp-modal-scroll-area min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
           {groups.map((group) => (
             <section className="space-y-3" key={group.label}>
               <p className="px-1 text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-100/80">

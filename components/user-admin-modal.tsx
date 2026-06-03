@@ -140,7 +140,7 @@ export function UserAdminModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
+    <div className="erp-user-modal-shell fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-4">
       <div className="flex h-dvh w-full max-w-4xl flex-col overflow-hidden rounded-none border border-white/10 bg-[#101315] shadow-2xl sm:h-auto sm:max-h-[92dvh] sm:rounded-lg">
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 p-3 sm:p-4">
           <div className="flex min-w-0 items-center gap-3">
