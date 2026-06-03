@@ -3267,8 +3267,10 @@ export function GestionLocalErp() {
   const [, setIsLoadingData] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
   const [pendingOfflineSales, setPendingOfflineSales] = useState(0);
+  const [isOfflineQueueReady, setIsOfflineQueueReady] = useState(false);
   const [isSyncingOfflineSales, setIsSyncingOfflineSales] = useState(false);
   const offlineSyncInProgressRef = useRef(false);
+  const desktopUpdateActionInProgressRef = useRef(false);
   const [desktopUpdate, setDesktopUpdate] = useState<DesktopUpdaterState>({
     status: "unsupported",
   });
@@ -3498,6 +3500,10 @@ export function GestionLocalErp() {
     void window.cajaUpdater?.install();
   };
 
+  const isDesktopUpdateWaitingForSync =
+    (desktopUpdate.status === "available" || desktopUpdate.status === "downloaded") &&
+    (!isOfflineQueueReady || !isOnline || pendingOfflineSales > 0 || isSyncingOfflineSales);
+
   useEffect(() => {
     let isMounted = true;
 
@@ -3552,6 +3558,20 @@ export function GestionLocalErp() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      !window.cajaUpdater ||
+      !sessionUser ||
+      !isOnline ||
+      desktopUpdate.status !== "error"
+    ) {
+      return;
+    }
+
+    void checkDesktopUpdate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOnline, sessionUser?.id]);
 
   useEffect(() => {
     setTimeTick(Date.now());
@@ -3777,10 +3797,12 @@ export function GestionLocalErp() {
     };
 
     setIsOnline(window.navigator.onLine);
-    void refreshOfflineSaleCount();
-    void getOfflineSales().then((records) => {
-      records.forEach(applyOfflineSaleLocally);
-    });
+    void Promise.all([
+      refreshOfflineSaleCount(),
+      getOfflineSales().then((records) => {
+        records.forEach(applyOfflineSaleLocally);
+      }),
+    ]).finally(() => setIsOfflineQueueReady(true));
     window.addEventListener("online", updateOnlineStatus);
     window.addEventListener("offline", updateOnlineStatus);
 
@@ -3796,6 +3818,60 @@ export function GestionLocalErp() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline, pendingOfflineSales, sessionUser?.id]);
+
+  useEffect(() => {
+    if (!window.cajaUpdater || !sessionUser || isBooting) return;
+
+    const canUpdateNow =
+      isOnline &&
+      isOfflineQueueReady &&
+      pendingOfflineSales === 0 &&
+      !isSyncingOfflineSales &&
+      !offlineSyncInProgressRef.current;
+
+    if (!canUpdateNow) {
+      if (isOnline && pendingOfflineSales > 0) {
+        void syncPendingOfflineSales();
+      }
+      return;
+    }
+
+    if (desktopUpdateActionInProgressRef.current) return;
+
+    if (desktopUpdate.status === "available") {
+      desktopUpdateActionInProgressRef.current = true;
+      window.cajaUpdater
+        .download()
+        .then(setDesktopUpdate)
+        .catch(() =>
+          setDesktopUpdate((current) => ({
+            ...current,
+            message: "No se pudo descargar la actualizacion",
+            status: "error",
+          })),
+        )
+        .finally(() => {
+          desktopUpdateActionInProgressRef.current = false;
+        });
+      return;
+    }
+
+    if (desktopUpdate.status === "downloaded") {
+      setNotice("Actualizacion lista: reiniciando para instalar");
+      window.setTimeout(() => {
+        void window.cajaUpdater?.install();
+      }, 1200);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    desktopUpdate.status,
+    isBooting,
+    isOfflineQueueReady,
+    isOnline,
+    isSyncingOfflineSales,
+    pendingOfflineSales,
+    sessionUser?.id,
+  ]);
 
   useEffect(() => {
     if (!isBooting && !sessionUser) {
@@ -5110,6 +5186,7 @@ const saveAttendanceRecord = async (record: AttendanceForm) => {
                     </div>
                     <div className="erp-desktop-update-action">
                       <DesktopUpdateButton
+                        isWaitingForOfflineSync={isDesktopUpdateWaitingForSync}
                         onCheck={checkDesktopUpdate}
                         onDownload={downloadDesktopUpdate}
                         onInstall={installDesktopUpdate}
@@ -13734,11 +13811,13 @@ function DisenoView({
 }
 
 function DesktopUpdateButton({
+  isWaitingForOfflineSync,
   onCheck,
   onDownload,
   onInstall,
   update,
 }: {
+  isWaitingForOfflineSync: boolean;
   onCheck: () => void;
   onDownload: () => void;
   onInstall: () => void;
@@ -13746,6 +13825,15 @@ function DesktopUpdateButton({
 }) {
   if (update.status === "unsupported") {
     return null;
+  }
+
+  if (isWaitingForOfflineSync) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm font-semibold text-amber-100">
+        <RefreshCw className="size-4 animate-spin" />
+        Actualiza al sincronizar
+      </div>
+    );
   }
 
   if (update.status === "idle" || update.status === "not-available") {

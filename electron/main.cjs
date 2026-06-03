@@ -8,14 +8,18 @@ const PORT = 5123;
 const HOST = "127.0.0.1";
 const DEFAULT_UPDATE_URL =
   "https://github.com/testeoparaweb/testeoparaweb/releases/latest/download";
-const AUTO_UPDATE_CHECK_DELAY_MS = 90000;
-const SHOULD_AUTO_CHECK_UPDATES = process.env.ELECTRON_AUTO_UPDATE_CHECK === "true";
+const AUTO_UPDATE_CHECK_DELAY_MS = 60000;
+const AUTO_UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const SHOULD_AUTO_CHECK_UPDATES = process.env.ELECTRON_AUTO_UPDATE_CHECK !== "false";
 let serverStarted = false;
 let mainWindow;
 let updaterStatus = {
   status: "idle",
   currentVersion: app.getVersion(),
 };
+let updaterSetupDone = false;
+let updateCheckInProgress = false;
+let updateDownloadInProgress = false;
 
 const configureLowEndRuntime = () => {
   process.env.NEXT_TELEMETRY_DISABLED = "1";
@@ -138,11 +142,70 @@ const getUpdaterUrl = () =>
   process.env.NEXT_PUBLIC_ELECTRON_UPDATE_URL ||
   DEFAULT_UPDATE_URL;
 
+const canUseUpdater = () => app.isPackaged && Boolean(getUpdaterUrl());
+
+const checkForUpdatesSafely = async () => {
+  if (
+    !canUseUpdater() ||
+    updateCheckInProgress ||
+    updateDownloadInProgress ||
+    updaterStatus.status === "checking" ||
+    updaterStatus.status === "downloading" ||
+    updaterStatus.status === "downloaded"
+  ) {
+    return updaterStatus;
+  }
+
+  updateCheckInProgress = true;
+
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch (error) {
+    sendUpdaterStatus({
+      message: error instanceof Error ? error.message : "No se pudo buscar actualizacion",
+      status: "error",
+    });
+  } finally {
+    updateCheckInProgress = false;
+  }
+
+  return updaterStatus;
+};
+
+const downloadUpdateSafely = async () => {
+  if (
+    !canUseUpdater() ||
+    updateDownloadInProgress ||
+    updaterStatus.status === "downloading" ||
+    updaterStatus.status === "downloaded"
+  ) {
+    return updaterStatus;
+  }
+
+  updateDownloadInProgress = true;
+
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (error) {
+    sendUpdaterStatus({
+      message: error instanceof Error ? error.message : "No se pudo descargar la actualizacion",
+      status: "error",
+    });
+  } finally {
+    updateDownloadInProgress = false;
+  }
+
+  return updaterStatus;
+};
+
 const setupAutoUpdater = () => {
+  if (updaterSetupDone) return;
+  updaterSetupDone = true;
+
   const updateUrl = getUpdaterUrl();
 
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = null;
 
   if (!app.isPackaged) {
@@ -159,18 +222,18 @@ const setupAutoUpdater = () => {
   });
 
   autoUpdater.on("checking-for-update", () => {
-    sendUpdaterStatus({ message: "Buscando actualización...", status: "checking" });
+    sendUpdaterStatus({ message: "Buscando actualizacion...", status: "checking" });
   });
   autoUpdater.on("update-available", (info) => {
     sendUpdaterStatus({
-      message: `Versión ${info.version} disponible`,
+      message: `Version ${info.version} disponible`,
       status: "available",
       version: info.version,
     });
   });
   autoUpdater.on("update-not-available", () => {
     sendUpdaterStatus({
-      message: "La app está actualizada.",
+      message: "La app esta actualizada.",
       status: "not-available",
     });
   });
@@ -183,7 +246,7 @@ const setupAutoUpdater = () => {
   });
   autoUpdater.on("update-downloaded", (info) => {
     sendUpdaterStatus({
-      message: "Actualización lista para instalar",
+      message: "Actualizacion lista para instalar",
       progress: 100,
       status: "downloaded",
       version: info.version,
@@ -201,27 +264,19 @@ const setupAutoUpdater = () => {
   }
 
   setTimeout(() => {
-    autoUpdater.checkForUpdates().catch((error) => {
-      sendUpdaterStatus({
-        message: error instanceof Error ? error.message : "No se pudo buscar actualización",
-        status: "error",
-      });
-    });
+    void checkForUpdatesSafely();
   }, AUTO_UPDATE_CHECK_DELAY_MS);
+  setInterval(() => {
+    void checkForUpdatesSafely();
+  }, AUTO_UPDATE_CHECK_INTERVAL_MS);
 };
 
 ipcMain.handle("updater:get-status", () => updaterStatus);
 ipcMain.handle("updater:check", async () => {
-  if (!app.isPackaged || !getUpdaterUrl()) {
-    return updaterStatus;
-  }
-
-  await autoUpdater.checkForUpdates();
-  return updaterStatus;
+  return checkForUpdatesSafely();
 });
 ipcMain.handle("updater:download", async () => {
-  await autoUpdater.downloadUpdate();
-  return updaterStatus;
+  return downloadUpdateSafely();
 });
 ipcMain.handle("updater:install", () => {
   autoUpdater.quitAndInstall(false, true);
